@@ -1,0 +1,13 @@
+---
+title: "Approach"
+author: "Leon Lin"
+date: "2026-01-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The dataset I'm going to use is involving NBA players draft history taken from kaggle. https://www.kaggle.com/datasets/wyattowalsh/basketball 
+The main motivation for picking this data set is my love for basketball and the NBA. I love watching it and always look into different stats and stuff so it would be very interesting to personally dig deeper and do different forms of analysis. The way I'm going to tackle this is by first picking what specific csv from this archieve I want to dig into first, which is going into NBA players draft history.  I will then figure out what questions I want to answer using this data and what specific columns I need. I'll clean up the data and remove columns not needed. I will then scan through the column names and rename those that are unclear or abbreviated. Some challenges I might anticipate are NA or missing values. I will try my best to fix those values by either removing the row or seeing if theres a summary statistic characteristic I can put in there such as mean, mode, median. I might have to declutter the data too and tidy up the data making it easier to read and more accessable. From first glances theres alot of information just on screen and can be a bit tricky to navigate. 
