@@ -8,6 +8,59 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+#OVERVIEW#
+The dataset I used is from Kaggle and its about the NBA or more specifically the NBA Draft. It contains information on different biometrics and containings athletic abilities that will be measured for teams to draft players. https://www.kaggle.com/datasets/wyattowalsh/basketball . It contains information regarding each drafted players position, weight, standing reach and wingspan length. I want to know the relationship between position and height and wingspan. 
+
+
+#APPROACH#
 
 The dataset I'm going to use is involving NBA players draft history taken from kaggle. https://www.kaggle.com/datasets/wyattowalsh/basketball 
 The main motivation for picking this data set is my love for basketball and the NBA. I love watching it and always look into different stats and stuff so it would be very interesting to personally dig deeper and do different forms of analysis. The way I'm going to tackle this is by first picking what specific csv from this archieve I want to dig into first, which is going into NBA players draft history.  I will then figure out what questions I want to answer using this data and what specific columns I need. I'll clean up the data and remove columns not needed. I will then scan through the column names and rename those that are unclear or abbreviated. Some challenges I might anticipate are NA or missing values. I will try my best to fix those values by either removing the row or seeing if theres a summary statistic characteristic I can put in there such as mean, mode, median. I might have to declutter the data too and tidy up the data making it easier to read and more accessable. From first glances theres alot of information just on screen and can be a bit tricky to navigate. 
+
+
+
+
+#CODE#
+```{r}
+library(tidyverse)
+library(ggplot2)
+url <- "https://raw.githubusercontent.com/leonlin333/DATA-607/refs/heads/main/draft_combine_stats.csv"
+draft <-read.csv(url)
+draft
+```
+upload the csv into R and read it to a dataframe
+
+
+```{r}
+draft<- draft |>
+  select(season, player_name, position, weight, wingspan, standing_reach_ft_in, height_wo_shoes) |>
+  rename(
+         standing_reach= standing_reach_ft_in,
+         height= height_wo_shoes
+         )|>
+  filter(season>= 2020)|>
+  drop_na()
+
+
+ggplot(draft, aes(x=height, y=wingspan, color= position))+ 
+  geom_point()+
+  geom_smooth(method="lm")
+
+
+
+  
+```
+Remove columns and rename weirdly named columns. Tidy up the table and drop rows with missing or NA values. Plot to see relationship between roles. 
+I wanted to document and see whether theres a relationship between the roles and weight/wingspan. 
+
+#Findings#
+You see that roles such as center in our dataset has higher wingspan and height while smaller players such as guards have smaller heights and wingspan. This sounds about right based on my knowledge on the NBA where the forward and center roles tend to be stronger larger players while guards are faster and smaller. 
+
+#Conclusions#
+Larger taller people should be in forward/center roles so they can better match up with other teams and give your team some needed size. These players can have larger impact in both rebounding and taking up the center of the court. You can extend this analysis by grabbing a larger sample size for all players in the NBA Draft combine. I only filtered out to 2020 so I can see modern trends with players i'm familiar with. 
+
+
+
+
+
+
