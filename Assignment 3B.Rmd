@@ -1,0 +1,76 @@
+---
+title: "Assignment 3B"
+author: "Leon Lin"
+date: "2026-02-11"
+output: html_document
+---
+
+Approach
+I will ask ChatGPT to generate a dataset for me that I can use. From then I will use the stock data chatgpt generates and use the package dplyr to work with and tidy the data. I will create a code that gives me the year to date average and the 6 day moving average for each stock generated. I would group them up by stock and then compute the averages by the tickers. One challenge I am anticipating is how to do year to date average. How would I filter out and select those from the first of the year to whatever date it is. I will use the tidyverse package and organize the dataset in a way thats easier to manipulate and work with. 
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(slider)
+
+set.seed(42)
+
+# Business-day date range
+dates <- seq.Date(
+  from = as.Date("2022-01-03"),
+  to   = as.Date("2022-01-31"),
+  by   = "day"
+) %>% 
+  keep(~ wday(.x) %in% 2:6)  # Monday-Friday only
+
+stocks <- tibble(
+  ticker = c("AAPL", "MSFT", "TSLA"),
+  start_price = c(170, 310, 220),
+  avg_volume = c(8.5e7, 3.2e7, 1.1e8)
+)
+
+generate_stock <- function(dates, ticker, start_price, avg_volume) {
+  
+  n <- length(dates)
+  
+  close <- start_price + cumsum(rnorm(n, mean = 0, sd = start_price * 0.01))
+  open  <- lag(close, default = close[1]) * runif(n, 0.995, 1.005)
+  high  <- pmax(open, close) * runif(n, 1.005, 1.02)
+  low   <- pmin(open, close) * runif(n, 0.98, 0.995)
+  volume <- round(rlnorm(n, log(avg_volume), 0.3))
+  
+  tibble(
+    date = dates,
+    ticker = ticker,
+    open = round(open, 2),
+    high = round(high, 2),
+    low  = round(low, 2),
+    close = round(close, 2),
+    volume = volume
+  )
+}
+
+stock_data <- stocks %>%
+  pmap_dfr(~ generate_stock(dates, ..1, ..2, ..3))
+
+stock_data
+
+```
+
+```{r}
+stock_with_windows <- stock_data |>
+  arrange(ticker, date) |>
+  group_by(ticker, year = year(date)) |>
+  mutate(
+    ytd_avg_close = cummean(close),
+    ma_6_day = slide_dbl(close, mean, .before = 5, .complete = FALSE)
+  ) |>
+  ungroup()
+
+
+stock_with_windows |> 
+  select(date, ticker, close, ytd_avg_close, ma_6_day) |> 
+  slice_head(n = 20)
+  
+```
+

@@ -1,0 +1,88 @@
+---
+title: "assignment 3A"
+author: "Leon Lin"
+date: "2026-02-11"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+library(readxl)
+```
+
+APPROACH
+For this assignment, I will implement a Global Baseline Estimate recommender in R using the ratings provided through the spreadsheet. My plan is to treat the spreadsheet as the dataset and translate its steps into a reproducible R workflow. I will first import the ratings into R and make it a dataframe/tibble. I'll tidy up the data and replace blanks with NA values and not be included in the calculations. I'll also calculate the mean for each movie. I will (1) import the rating table, (2) reshape it into a tidy, long format where each row represents one critic's rating, (3) compute the global mean rating across all available ratings, (4) compute the baseline effect for critics and for movies, and (5) combine these components to produce a baseline predicted rating for each critic and their movies. Once the baseline predictions are computed, I will use them to generate a recommendation by ranking movies based on the predicted rating values. The main data challenge I anticipate is that the provided ratings dataset is sparse and missing a bunch of data. In R, these will need to be handled as NA values and excluded from mean calculations so that averages are not distorted. Another potential issue is that importing from Excel may interpret some blank cells or non-numeric values unexpectedly, so I will validate column types after import and convert ratings to numeric if needed. 
+
+```{r}
+library(tidyverse)
+library(readxl)
+
+data_wide <- read_excel("MovieRatings.xlsx", sheet = "MovieRatings")
+
+ratings_long <- data_wide |>
+  pivot_longer(
+    cols = -Critic,
+    names_to = "movie",
+    values_to = "rating"
+  ) |>
+  mutate(rating = as.numeric(rating))
+
+ratings_obs <- ratings_long |>
+  filter(!is.na(rating))
+
+head(ratings_obs)
+
+mu <- mean(ratings_obs$rating)
+mu
+
+```
+
+
+```{r}
+movie_stats <- ratings_obs |>
+  group_by(movie) |>
+  summarize(movie_mean = mean(rating), .groups = "drop") |>
+  mutate(b_movie = movie_mean - mu)
+
+movie_stats
+```
+
+```{r}
+
+critic_stats <- ratings_obs |>
+  group_by(Critic) |>
+  summarize(critic_mean = mean(rating), .groups = "drop") |>
+  mutate(b_critic = critic_mean - mu)
+
+critic_stats
+
+
+```
+
+
+```{r}
+preds <- ratings_long |>
+  left_join(critic_stats |> select(Critic, b_critic), by = "Critic") |>
+  left_join(movie_stats  |> select(movie,  b_movie),  by = "movie") |>
+  mutate(
+    b_critic = coalesce(b_critic, 0),  # safety: if a critic had no ratings
+    b_movie  = coalesce(b_movie,  0),  # safety: if a movie had no ratings
+    baseline_pred = mu + b_critic + b_movie
+  )
+
+recs <- preds |>
+  filter(is.na(rating)) |>
+  arrange(Critic, desc(baseline_pred))
+
+top3_per_critic <- recs |>
+  group_by(Critic) |>
+  slice_max(baseline_pred, n = 3, with_ties = FALSE) |>
+  ungroup()
+
+top3_per_critic
+```
+
+
+
+
