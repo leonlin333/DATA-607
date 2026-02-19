@@ -1,0 +1,82 @@
+---
+title: "Project 1"
+author: "Leon Lin"
+date: "2026-02-19"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(stringr)
+library(readr)
+library(purrr)
+```
+
+APPROACH
+For this project I've been tasked with working with chess tournament result where theres a list of players with their ratings, game results vs opponents, rounds, total points based on those wins, their ID number, and more. I'm going to write a code that generates a csv file containing relevant information with the following information Player’s Name, Player’s State, Total Number of Points, Player’s Pre-Rating, and Average Pre Chess Rating of Opponents. The average rating would be found by calculating all the pre-ratings for each opponenet and adding them up then dividing it by the amount of players. The way I plan on extracting regular information is through regex in the stringr package. Regex uses different symbols to specificy where to look and what to filter out when looking through the file. I will the make each important information into its own column in a data frame where I will then select those required and are important. One set back I might face though is properly using Regex in my code and making sure i have the correct regex function and the proper placement to make sure all my wanted information is taken. 
+
+
+
+```{r}
+lines <- readLines("tournamentinfo.txt")
+header_idx <- which(str_detect(lines, "^\\s*\\d+\\s*\\|"))
+
+get_opp_nums <- function(header_line) {
+  m <- str_match_all(header_line, "\\b([WLD])\\s+(\\d+)")[[1]]
+  as.integer(m[, 3])
+}
+
+players <- map_dfr(header_idx, function(i) {
+  header <- lines[i]
+  detail <- lines[i + 1]
+
+  h <- str_split(header, "\\|", simplify = TRUE) |> str_trim()
+
+  pair_num   <- as.integer(h[1])
+  player_name <- h[2]
+  total_points <- as.numeric(h[3])
+
+  state <- str_match(detail, "^\\s*([A-Z]{2})\\s*\\|")[, 2]
+  pre_rating <- as.integer(str_match(detail, "R:\\s*(\\d+)")[, 2])
+
+  opp_nums <- get_opp_nums(header)
+
+  tibble(
+    pair_num = pair_num,
+    player_name = player_name,
+    state = state,
+    total_points = total_points,
+    pre_rating = pre_rating,
+    opp_nums = list(opp_nums)
+  )
+})
+
+players |> slice(1:5)
+
+rating_lookup <- players |> select(pair_num, pre_rating)
+
+players_final <- players |>
+  mutate(
+    avg_opp_pre_rating = map_dbl(opp_nums, function(v) {
+      opp_ratings <- rating_lookup$pre_rating[match(v, rating_lookup$pair_num)]
+      mean(opp_ratings, na.rm = TRUE)
+    })
+  ) |>
+  select(
+    player_name,
+    state,
+    total_points,
+    pre_rating,
+    avg_opp_pre_rating
+  )
+
+players_final |> slice(1:10)
+
+```
+
+```{r}
+write_csv(players_final, "chess_player_summary.csv")
+```
+
+Gary Hua is arguably the best player in this tournament with the highest pre-rating, hightest opponent pre rating, and the most amount of points. This means he came in the highest ranking, played the best in the tournament, and still came out tied with the highest points. He didn't just face the low opponents and win but rather faced the other highest ranks in the tournament and still came out on top.
