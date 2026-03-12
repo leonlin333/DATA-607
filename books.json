@@ -1,0 +1,30 @@
+[
+ {
+   "title": "Python for Data Analysis",
+   "authors": ["Wes McKinney"],
+   "year": 2022,
+   "publisher": "O'Reilly",
+   "isbn": "9781098104030"
+ },
+
+ {
+   "title": "Hands-On Machine Learning with Scikit-Learn, Keras & TensorFlow",
+   "authors": ["Aurelien Geron"],
+   "year": 2022,
+   "publisher": "O'Reilly",
+   "isbn": "9781098125974"
+ },
+
+ {
+   "title": "An Introduction to Statistical Learning",
+   "authors": [
+      "Gareth James",
+      "Daniela Witten",
+      "Trevor Hastie",
+      "Robert Tibshirani"
+   ],
+   "year": 2021,
+   "publisher": "Springer",
+   "isbn": "9781071614174"
+ }
+]

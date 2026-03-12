@@ -1,0 +1,39 @@
+---
+title: "Working with HTML and JSON"
+format: html
+---
+
+## Load Libraries
+
+```{r}
+library(rvest)
+library(jsonlite)
+library(dplyr)
+```
+
+## Load HTML Data
+
+```{r}
+html_data <- read_html("books.html")
+
+books_html <- html_data |>
+  html_table(fill = TRUE)
+
+books_html <- books_html[[1]]
+
+books_html
+```
+
+## Load JSON Data
+
+```{r}
+books_json <- fromJSON("books.json")
+
+books_json
+```
+
+## Compare the Data Frames
+
+```{r}
+identical(books_html, books_json)
+```
