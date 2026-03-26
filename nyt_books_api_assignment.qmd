@@ -1,0 +1,145 @@
+---
+title: "Using a New York Times API in R"
+author: "Leon Lin"
+format: html
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+Approach
+For this assignment I got an API From the new york times. The API I used is the NYT_API_KEY API. We will first import all neccessary libraries to request and work with the API. We first turn the API into a data frame that we can work by sending out a get request. The request will be given back through a JSON file and thats when we have to work with the file and tidy our data. Next we will turn it into a dataframe and select neccessary columns such as rank, title, section, published_date, url. The plan is to clean the data into a form that's usuable and recgonizable to similar dataframes and datasets we've used in the past. The area that might be the most challenging is actually working with the JSON file. JSON files are not something i'm particularly familar will and may pose a challenge. 
+
+
+## API selected
+
+I selected the **New York Times Books API overview endpoint**.
+
+- **Endpoint:** `https://api.nytimes.com/svc/books/v3/lists/overview.json`
+- **Description:** This endpoint returns the top 5 books for all current New York Times Best Sellers lists. It can also return results for a specific published date if that parameter is provided.
+
+## Question
+
+**Which current New York Times best-seller lists have the highest average number of weeks on the list among their top 5 books?**
+
+This question is interesting because it compares how stable different categories are. Some best seller lists may change quickly, while others may be dominated by books that stay on the list for many weeks.
+
+## Request details
+
+For this document, I request the latest overview of all best-seller lists.
+
+- **Base URL:** `https://api.nytimes.com/svc/books/v3/lists/overview.json`
+- **Parameters used:**
+  - `api-key = Sys.getenv("NYT_API_KEY")`
+
+The API key is read from an environment variable so that it is not hard coded in the document.
+
+## Setup
+
+```{r}
+library(httr2)
+library(dplyr)
+library(purrr)
+library(tibble)
+library(knitr)
+```
+
+```{r}
+# Store your API key in your environment before rendering this document.
+# Example for ~/.Renviron:
+# NYT_API_KEY=your_real_key_here
+
+nyt_api_key <- Sys.getenv("NYT_API_KEY")
+
+if (nyt_api_key == "") {
+  stop("NYT_API_KEY is not set. Add it to your environment and rerun.")
+}
+```
+
+## Make the request
+
+```{r}
+base_url <- "https://api.nytimes.com/svc/books/v3/lists/overview.json"
+
+req <- request(base_url) |>
+  req_url_query(`api-key` = nyt_api_key)
+
+resp <- req |> req_perform()
+raw_nyt <- resp |> resp_body_json(simplifyVector = FALSE)
+```
+
+## Parse JSON into a tidy data frame
+
+```{r}
+`%||%` <- function(x, y) {
+  if (is.null(x) || length(x) == 0) y else x
+}
+
+books_df <- map_dfr(raw_nyt$results$lists, function(lst) {
+  map_dfr(lst$books %||% list(), function(book) {
+    tibble(
+      list_name = lst$list_name %||% NA_character_,
+      display_name = lst$display_name %||% NA_character_,
+      list_name_encoded = lst$list_name_encoded %||% NA_character_,
+      list_updated = lst$updated %||% NA_character_,
+      bestsellers_date = as.Date(lst$bestsellers_date %||% NA_character_),
+      published_date = as.Date(lst$published_date %||% NA_character_),
+      rank = as.integer(book$rank %||% NA_integer_),
+      rank_last_week = as.integer(book$rank_last_week %||% NA_integer_),
+      weeks_on_list = as.integer(book$weeks_on_list %||% NA_integer_),
+      title = book$title %||% NA_character_,
+      author = book$author %||% NA_character_,
+      publisher = book$publisher %||% NA_character_,
+      description = book$description %||% NA_character_,
+      primary_isbn13 = book$primary_isbn13 %||% NA_character_,
+      amazon_product_url = book$amazon_product_url %||% NA_character_,
+      book_uri = book$book_uri %||% NA_character_
+    )
+  })
+})
+
+books_df
+```
+
+## Tidy data preview
+
+```{r}
+kable(head(books_df, 10))
+```
+
+## Analysis
+
+```{r}
+list_summary <- books_df |>
+  group_by(display_name) |>
+  summarize(
+    books_in_top5 = n(),
+    avg_weeks_on_list = mean(weeks_on_list, na.rm = TRUE),
+    median_weeks_on_list = median(weeks_on_list, na.rm = TRUE),
+    max_weeks_on_list = max(weeks_on_list, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(desc(avg_weeks_on_list))
+
+kable(
+  head(list_summary, 10),
+  digits = 2,
+  caption = "Top 10 lists by average weeks on list among the current top 5 books"
+)
+```
+
+## Answer to the question
+
+Based on the current Books API overview response, the lists at the top of list_summary have the highest average number of weeks on the list among their current top 5 books. These categories appear to be more stable at the moment because their bestselling titles remain on the list longer than titles in categories with lower averages.
+
+## Data-cleaning notes
+
+The main cleaning steps were:
+
+1. The JSON response is nested as `results -> lists -> books`, so I flattened it into one row per book.
+2. I copied list-level metadata such as `display_name`, `published_date`, and `bestsellers_date` onto each book row so the final result would be tidy.
+3. I converted date fields to `Date` values and converted numeric ranking variables such as `rank`, `rank_last_week`, and `weeks_on_list` to integers.
+4. Missing or empty values were left as `NA` instead of being dropped.
+
+This produces a clean tibble that is ready for further analysis or visualization.
