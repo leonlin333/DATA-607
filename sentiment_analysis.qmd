@@ -1,0 +1,355 @@
+---
+title: "Assignment 10A"
+author: "Leon Lin"
+date: "2026-04-16"
+output: html_document
+---
+
+```{r}
+
+library(tidytext)
+library(janeaustenr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(wordcloud)
+library(reshape2)
+```
+
+```{r}
+
+get_sentiments("afinn") |> head(10)
+get_sentiments("bing")  |> head(10)
+get_sentiments("nrc")   |> head(10)
+```
+
+```{r}
+tidy_books <- austen_books() |>
+  group_by(book) |>
+  mutate(
+    linenumber = row_number(),
+    chapter    = cumsum(str_detect(
+      text,
+      regex("^chapter [\\divxlc]", ignore_case = TRUE)
+    ))
+  ) |>
+  ungroup() |>
+  unnest_tokens(word, text)
+
+tidy_books
+```
+
+
+```{r}
+nrc_joy <- get_sentiments("nrc") |> filter(sentiment == "joy")
+
+tidy_books |>
+  filter(book == "Emma") |>
+  inner_join(nrc_joy, by = "word") |>
+  count(word, sort = TRUE) |>
+  slice_head(n = 15)
+```
+
+
+```{r}
+jane_austen_sentiment <- tidy_books |>
+  inner_join(get_sentiments("bing"), by = "word") |>
+  count(book, index = linenumber %/% 80, sentiment) |>
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) |>
+  mutate(sentiment = positive - negative)
+
+ggplot(jane_austen_sentiment, aes(index, sentiment, fill = book)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~book, ncol = 2, scales = "free_x") +
+  labs(
+    title = "Sentiment Through Jane Austen's Novels",
+    x     = "Narrative Index ",
+    y     = "Neet Sentiment"
+  ) +
+  theme_minimal()
+```
+
+
+
+```{r}
+
+pride_prejudice <- tidy_books |> filter(book == "Pride & Prejudice")
+
+afinn <- pride_prejudice |>
+  inner_join(get_sentiments("afinn"), by = "word") |>
+  group_by(index = linenumber %/% 80) |>
+  summarise(sentiment = sum(value)) |>
+  mutate(method = "AFINN")
+
+bing_and_nrc <- bind_rows(
+  pride_prejudice |>
+    inner_join(get_sentiments("bing"), by = "word") |>
+    mutate(method = "Bing et al."),
+  pride_prejudice |>
+    inner_join(
+      get_sentiments("nrc") |> filter(sentiment %in% c("positive", "negative")),
+      by = "word"
+    ) |>
+    mutate(method = "NRC")
+) |>
+  count(method, index = linenumber %/% 80, sentiment) |>
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) |>
+  mutate(sentiment = positive - negative)
+
+bind_rows(afinn, bing_and_nrc) |>
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y") +
+  labs(
+    title = "Three Sentiment Lexicons: Pride and Prejudice",
+    x     = "Narrative Index (80-line chunks)",
+    y     = "Net Sentiment"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+bing_word_counts <- tidy_books |>
+  inner_join(get_sentiments("bing"), by = "word") |>
+  count(word, sentiment, sort = TRUE) |>
+  ungroup()
+
+bing_word_counts |>
+  group_by(sentiment) |>
+  slice_max(n, n = 10) |>
+  ungroup() |>
+  mutate(word = reorder(word, n)) |>
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(
+    title = "Words Contributing Most to Sentiment in Austen's Novels",
+    x     = "Count",
+    y     = NULL
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+custom_stop_words <- bind_rows(
+  tibble(word = c("miss"), lexicon = c("custom")),
+  stop_words
+)
+custom_stop_words |> filter(lexicon == "custom")
+```
+
+
+```{r}
+
+tidy_books |>
+  inner_join(get_sentiments("bing"), by = "word") |>
+  count(word, sentiment, sort = TRUE) |>
+  acast(word ~ sentiment, value.var = "n", fill = 0) |>
+  comparison.cloud(colors = c("firebrick", "steelblue"), max.words = 100)
+```
+
+
+
+```{r}
+bingnegative <- get_sentiments("bing") |> filter(sentiment == "negative")
+
+wordcounts <- tidy_books |>
+  group_by(book, chapter) |>
+  summarize(words = n(), .groups = "drop")
+
+tidy_books |>
+  semi_join(bingnegative, by = "word") |>
+  group_by(book, chapter) |>
+  summarize(negativewords = n(), .groups = "drop") |>
+  left_join(wordcounts, by = c("book", "chapter")) |>
+  mutate(ratio = negativewords / words) |>
+  filter(chapter != 0) |>
+  slice_max(ratio, n = 1, by = book) |>
+  arrange(book)
+```
+
+---
+
+We replace Jane Austen's novels with four Charles Dickens novels obtained
+from Project Gutenberg using the `gutenbergr` package:
+
+| Title | Gutenberg ID |
+|---|---|
+| A Tale of Two Cities | 98 |
+| Great Expectations | 1400 |
+| Oliver Twist | 730 |
+| David Copperfield | 766 |
+
+```{r}
+library(gutenbergr)
+
+dickens_ids <- c(98, 1400, 730, 766)
+
+dickens_raw <- gutenberg_download(
+  dickens_ids,
+  meta_fields = "title",
+  mirror      = "https://gutenberg.pglaf.org/"
+)
+
+# Recode short titles for cleaner plots
+dickens_raw <- dickens_raw |>
+  mutate(title = case_when(
+    gutenberg_id == 98   ~ "A Tale of Two Cities",
+    gutenberg_id == 1400 ~ "Great Expectations",
+    gutenberg_id == 730  ~ "Oliver Twist",
+    gutenberg_id == 766  ~ "David Copperfield"
+  ))
+
+head(dickens_raw)
+```
+
+```{r}
+tidy_dickens <- dickens_raw |>
+  group_by(title) |>
+  mutate(
+    linenumber = row_number(),
+    chapter    = cumsum(str_detect(
+      text,
+      regex("^chapter [\\divxlc]", ignore_case = TRUE)
+    ))
+  ) |>
+  ungroup() |>
+  unnest_tokens(word, text)
+
+tidy_dickens
+```
+
+
+```{r}
+dickens_sentiment_bing <- tidy_dickens |>
+  inner_join(get_sentiments("bing"), by = "word") |>
+  count(title, index = linenumber %/% 80, sentiment) |>
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) |>
+  mutate(sentiment = positive - negative)
+
+ggplot(dickens_sentiment_bing, aes(index, sentiment, fill = title)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~title, ncol = 2, scales = "free_x") +
+  labs(
+    title = "Sentiment Through Charles Dickens' Novels (Bing)",
+    x     = "Narrative Index",
+    y     = "Net Sentiment"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+tidy_dickens |>
+  filter(title == "Great Expectations") |>
+  inner_join(nrc_joy, by = "word") |>
+  count(word, sort = TRUE) |>
+  slice_head(n = 15)
+```
+
+
+```{r}
+
+tidy_dickens |>
+  inner_join(get_sentiments("bing"), by = "word") |>
+  count(word, sentiment, sort = TRUE) |>
+  group_by(sentiment) |>
+  slice_max(n, n = 10) |>
+  ungroup() |>
+  mutate(word = reorder(word, n)) |>
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(
+    title = "Words Contributing Most to Sentiment in Dickens' Novels",
+    x     = "Count",
+    y     = NULL
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+library(syuzhet)
+
+syuzhet_lex <- get_sentiment_dictionary(dictionary = "syuzhet") |>
+  as_tibble()
+
+# Inspect actual column names (run once to confirm)
+glimpse(syuzhet_lex)
+
+# Then rename based on what glimpse shows — typically "word" and "value"
+syuzhet_lex <- syuzhet_lex |>
+  rename(syuzhet_score = value)   # "word" column usually already named correctly
+```
+
+
+
+```{r}
+tale <- tidy_dickens |> filter(title == "A Tale of Two Cities")
+
+afinn_tale <- tale |>
+  inner_join(get_sentiments("afinn"), by = "word") |>
+  group_by(index = linenumber %/% 80) |>
+  summarise(sentiment = sum(value)) |>
+  mutate(method = "AFINN")
+
+syuzhet_tale <- tale |>
+  inner_join(syuzhet_lex, by = "word") |>
+  group_by(index = linenumber %/% 80) |>
+  summarise(sentiment = sum(syuzhet_score)) |>
+  mutate(method = "Syuzhet (Jockers)")
+
+bind_rows(afinn_tale, syuzhet_tale) |>
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y") +
+  labs(
+    title = "AFINN vs. Syuzhet: A Tale of Two Cities",
+    x     = "Narrative Index ",
+    y     = "Net Sentiment Score"
+  ) +
+  theme_minimal()
+```
+
+
+
+```{r}
+dickens_syuzhet <- tidy_dickens |>
+  inner_join(syuzhet_lex, by = "word") |>
+  group_by(title, index = linenumber %/% 80) |>
+  summarise(sentiment = sum(syuzhet_score), .groups = "drop")
+
+ggplot(dickens_syuzhet, aes(index, sentiment, fill = title)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~title, ncol = 2, scales = "free_x") +
+  labs(
+    title = "Syuzhet Sentiment Through Charles Dickens' Novels",
+    x     = "Narrative Index",
+    y     = "Net Syuzhet Score"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+syuzhet_words <- tidy_dickens |>
+  inner_join(syuzhet_lex, by = "word") |>
+  distinct(word, syuzhet_score)
+
+afinn_words <- tidy_dickens |>
+  inner_join(get_sentiments("afinn"), by = "word") |>
+  distinct(word)
+
+syuzhet_only <- syuzhet_words |>
+  anti_join(afinn_words, by = "word") |>
+  arrange(desc(abs(syuzhet_score)))
+
+cat("Words in Syuzhet but not AFINN (Dickens corpus):", nrow(syuzhet_only), "\n")
+
+syuzhet_only |> slice_head(n = 20)
+```
+

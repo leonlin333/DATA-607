@@ -1,0 +1,418 @@
+---
+title: "Assignment 10B"
+author: "Leon Lin"
+date: "2026-04-16"
+output: html_document
+---
+
+
+# Setup
+
+```{r}
+#| label: setup
+library(jsonlite)  
+library(tibble)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(ggplot2)
+library(knitr)
+```
+
+
+```{r}
+laur_url <- "https://api.nobelprize.org/2.1/laureates?limit=1000&format=json"
+laur_raw <- read_json(laur_url, simplifyVector = FALSE)
+
+cat("Laureate records returned:", length(laur_raw$laureates), "\n")
+```
+
+## Prize Data
+
+```{r}
+prize_url <- "https://api.nobelprize.org/2.1/nobelPrizes?limit=1000&format=json"
+prize_raw <- read_json(prize_url, simplifyVector = FALSE)
+
+cat("Prize records returned:", length(prize_raw$nobelPrizes), "\n")
+```
+
+```{r}
+pluck_chr <- function(x, ...) {
+  val <- purrr::pluck(x, ..., .default = NULL)
+  if (is.null(val) || length(val) == 0) NA_character_ else as.character(val[[1]])
+}
+
+laureates_raw_tbl <- tibble(raw = laur_raw$laureates)
+
+# ── Bio level (one row per laureate) ─────────────────────────────────────────
+bio <- laureates_raw_tbl |>
+  hoist(raw,
+    id          = "id",
+    known_name  = list("knownName", "en"),
+    full_name   = list("fullName",  "en"),
+    org_name    = list("orgName",   "en"),
+    gender      = "gender",
+    birth_date  = list("birth", "date"),
+    birth_ctry  = list("birth", "place", "country",    "en"),
+    birth_ctry2 = list("birth", "place", "countryNow", "en"),
+    prizes      = "nobelPrizes"
+  ) |>
+  mutate(
+    name          = coalesce(known_name, full_name, org_name),
+    gender        = coalesce(gender, "organization"),
+    birth_year    = as.integer(str_extract(coalesce(birth_date, ""), "^\\d{4}")),
+    birth_country = coalesce(birth_ctry, birth_ctry2)
+  ) |>
+  select(id, name, gender, birth_year, birth_country, prizes)
+
+# ── Prize level (one row per laureate × prize) ───────────────────────────────
+prizes_per_person <- bio |>
+  select(id, birth_year, birth_country, gender, prizes) |>
+  unnest_longer(prizes) |>
+  mutate(
+    award_year  = as.integer(pluck_chr(prizes, "awardYear")),
+    category    = map_chr(prizes, ~ pluck_chr(.x, "category", "en")),
+    aff_country = map_chr(prizes, function(p) {
+      affs <- p$affiliations
+      if (is.null(affs) || length(affs) == 0) return(NA_character_)
+      a <- affs[[1]]
+      coalesce(pluck_chr(a, "country", "en"),
+               pluck_chr(a, "countryNow", "en"))
+    })
+  ) |>
+  select(id, birth_year, birth_country, gender,
+         award_year, category, aff_country)
+
+glimpse(prizes_per_person)
+```
+
+
+
+```{r}
+prize_tbl <- tibble(raw = prize_raw$nobelPrizes) |>
+  hoist(raw,
+    award_year   = "awardYear",
+    category     = list("category", "en"),
+    laureates    = "laureates",
+    prize_amount = "prizeAmount"
+  ) |>
+  mutate(
+    award_year   = as.integer(award_year),
+    prize_amount = as.numeric(prize_amount),
+    n_laureates  = map_int(laureates, ~ if (is.null(.x)) 0L else length(.x))
+  ) |>
+  select(award_year, category, n_laureates, prize_amount)
+
+glimpse(prize_tbl)
+```
+
+---
+
+# Question 1 — Which countries have produced the most Nobel laureates by birth?
+
+**Question:** Country of birth is a timestable proxy for where laureates
+grew up and were educated. Which nations have historically been the most
+productive sources of Nobel-level talent?
+
+```{r}
+top_birth <- prizes_per_person |>
+  filter(!is.na(birth_country), birth_country != "") |>
+  distinct(id, birth_country) |>
+  count(birth_country, name = "laureates") |>
+  slice_max(laureates, n = 20) |>
+  mutate(rank = row_number()) |>
+  arrange(desc(laureates))
+
+top_birth |>
+  select(rank, birth_country, laureates) |>
+  kable(col.names = c("Rank", "Birth Country", "Laureates Born There"))
+```
+
+```{r}
+top_birth |>
+  mutate(birth_country = reorder(birth_country, laureates)) |>
+  ggplot(aes(laureates, birth_country, fill = laureates)) +
+  geom_col() +
+  scale_fill_gradient(low = "#a8c6e8", high = "#1a5c9e", guide = "none") +
+  labs(
+    title    = "Top 20 Countries by Nobel Laureate Birth",
+    subtitle = "One row per unique laureate; multiple prizes counted once",
+    x        = "Laureates Born There",
+    y        = NULL
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+**Answer:** The United States, Germany, and the United Kingdom lead by
+birth country. However, many US-affiliated winners were born abroad and
+emigrated — the US is a net *recipient* of scientific talent. Germany's
+high birth count reflects its 19th-century educational dominance, while
+its post-1933 exodus is the subject of Question 2.
+
+---
+
+# Question 2 — Which country has the most "brain drain"? *(Join across fields)*
+
+**Question:** A laureate born in Country A but affiliated with an
+institution in Country B at the time of their award represents a loss of
+intellectual capital from Country A. Which birth countries lost the most
+laureates this way?
+
+*This requires comparing `birth_country` and `aff_country` within the same
+laureate record — a cross-field filter that cannot be answered from either
+field alone.*
+
+```{r}
+drain <- prizes_per_person |>
+  filter(
+    !is.na(birth_country), birth_country != "",
+    !is.na(aff_country),   aff_country   != "",
+    birth_country != aff_country
+  ) |>
+  distinct(id, birth_country, aff_country)
+
+emigrated <- drain |>
+  count(birth_country, name = "emigrated")
+
+total_born <- prizes_per_person |>
+  filter(!is.na(birth_country), birth_country != "") |>
+  distinct(id, birth_country) |>
+  count(birth_country, name = "total_born")
+
+drain_tbl <- emigrated |>
+  left_join(total_born, by = "birth_country") |>
+  mutate(pct_abroad = round(100 * emigrated / total_born, 1)) |>
+  arrange(desc(emigrated))
+```
+
+```{r}
+drain_tbl |>
+  slice_head(n = 15) |>
+  kable(col.names = c("Birth Country", "Emigrated Laureates",
+                      "Total Born There", "% Who Worked Abroad at Award"))
+```
+
+```{r}
+drain_tbl |>
+  slice_head(n = 15) |>
+  mutate(birth_country = reorder(birth_country, emigrated)) |>
+  ggplot(aes(emigrated, birth_country, fill = pct_abroad)) +
+  geom_col() +
+  scale_fill_gradient(low = "#fee08b", high = "#d73027", name = "% Abroad") +
+  labs(
+    title    = "Nobel Prize Brain Drain: Born There, Awarded Elsewhere",
+    subtitle = "Laureates whose prize-time affiliation was outside their birth country",
+    x        = "Emigrated Laureates",
+    y        = NULL
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+```{r}
+drain_tbl |>
+  filter(total_born >= 5) |>
+  slice_max(pct_abroad, n = 15) |>
+  mutate(birth_country = reorder(birth_country, pct_abroad)) |>
+  ggplot(aes(pct_abroad, birth_country, fill = pct_abroad)) +
+  geom_col() +
+  scale_fill_gradient(low = "#fee08b", high = "#d73027", guide = "none") +
+  labs(
+    title    = "Highest Nobel Brain Drain Rate",
+    subtitle = "% of born-there laureates affiliated abroad at award (≥5 born laureates)",
+    x        = "% Who Worked Abroad at Time of Award",
+    y        = NULL
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+**Answer:** **Germany** has lost the most Nobel laureates in absolute
+numbers. A large share were Jewish scientists who fled after 1933 and
+received prizes at US and UK universities. Hungary and Poland show the
+highest *rates* — over 50% of their born laureates won prizes while
+working abroad, reflecting World War II displacement and Cold War
+political persecution.
+
+---
+
+# Question 3 — How has the average age at award changed over the decades?
+
+**Question:** Is there a widening gap between scientific discovery and
+Nobel recognition? If so, laureates should be older on average in recent
+decades than they were a century ago.
+
+```{r}
+age_data <- prizes_per_person |>
+  filter(!is.na(birth_year), !is.na(award_year),
+         gender != "organization") |>
+  mutate(
+    age_at_award = award_year - birth_year,
+    decade       = (award_year %/% 10) * 10
+  ) |>
+  filter(age_at_award >= 25, age_at_award <= 100)
+
+age_by_decade <- age_data |>
+  group_by(decade) |>
+  summarise(mean_age = mean(age_at_award), .groups = "drop")
+
+age_by_cat <- age_data |>
+  group_by(decade, category) |>
+  summarise(mean_age = round(mean(age_at_award), 1),
+            n        = n(), .groups = "drop") |>
+  filter(n >= 3)
+```
+
+```{r}
+age_by_decade |>
+  ggplot(aes(decade, mean_age)) +
+  geom_line(linewidth = 1.2, color = "#2c7bb6") +
+  geom_point(size = 3, color = "#2c7bb6") +
+  geom_smooth(method = "lm", se = TRUE, linetype = "dashed",
+              color = "gray50", fill = "gray85") +
+  scale_x_continuous(breaks = seq(1900, 2020, 20)) +
+  labs(
+    title    = "Rising Age at Nobel Prize Award (All Categories Combined)",
+    subtitle = "Age estimated as award year − birth year",
+    x        = "Decade of Award",
+    y        = "Mean Age at Award"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+```{r}
+ggplot(age_by_cat, aes(decade, mean_age, color = category)) +
+  geom_line(linewidth = 1) +
+  geom_point(aes(size = n), alpha = 0.8) +
+  scale_size_continuous(range = c(2, 6), guide = "none") +
+  scale_color_brewer(palette = "Set2", name = "Category") +
+  scale_x_continuous(breaks = seq(1900, 2020, 20)) +
+  labs(
+    title    = "Average Age at Award by Category and Decade",
+    subtitle = "Point size ∝ number of laureates in that cell",
+    x        = "Decade of Award",
+    y        = "Mean Age at Award"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+age_data |>
+  group_by(category) |>
+  summarise(
+    mean_age   = round(mean(age_at_award), 1),
+    median_age = median(age_at_award),
+    youngest   = min(age_at_award),
+    oldest     = max(age_at_award),
+    n          = n()
+  ) |>
+  arrange(desc(mean_age)) |>
+  kable(col.names = c("Category", "Mean Age", "Median",
+                      "Youngest", "Oldest", "N"))
+```
+
+**Answer:** The average age at award has risen by roughly **12–15 years**
+since 1901. In the early decades, science laureates were typically in their
+mid-50s; today they are usually in their late 60s. The Economics prize
+(established 1969) has the oldest average laureates. Literature and Peace
+are more stable — those prizes recognize sustained careers or advocacy
+rather than a single, dateable experimental discovery.
+
+---
+
+# Question 4 — How often are prizes shared, and is collaboration increasing over time?
+
+**Question:** Nobel science prizes can be shared among up to three people.
+If modern science is more collaborative, we should see the share of
+three-way splits rising over time and solo prizes declining.
+
+```{r}
+share_data <- prize_tbl |>
+  filter(!is.na(n_laureates), n_laureates > 0) |>
+  mutate(
+    share_type = case_when(
+      n_laureates == 1 ~ "Solo",
+      n_laureates == 2 ~ "Split (2)",
+      n_laureates == 3 ~ "Split (3)",
+      TRUE             ~ "Other"
+    ),
+    decade = (award_year %/% 10) * 10
+  )
+
+share_by_cat <- share_data |>
+  count(category, share_type) |>
+  group_by(category) |>
+  mutate(pct = round(100 * n / sum(n), 1)) |>
+  ungroup()
+```
+
+```{r}
+share_by_cat |>
+  mutate(
+    share_type = factor(share_type,
+                        levels = c("Solo", "Split (2)", "Split (3)", "Other")),
+    category   = reorder(category, -pct, function(x) x[1])
+  ) |>
+  ggplot(aes(category, pct, fill = share_type)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(
+    values = c("Solo"      = "#2166ac",
+               "Split (2)" = "#92c5de",
+               "Split (3)" = "#f4a582",
+               "Other"     = "#d6604d"),
+    name   = "Prize Structure"
+  ) +
+  labs(
+    title = "Nobel Prize Sharing Structure by Category",
+    x     = NULL,
+    y     = "% of Prizes in Category"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x  = element_text(angle = 20, hjust = 1),
+        legend.position = "bottom")
+```
+
+```{r}
+science_cats <- c("Physics", "Chemistry", "Medicine")
+
+share_data |>
+  filter(category %in% science_cats) |>
+  group_by(decade, category) |>
+  summarise(pct_three = 100 * mean(share_type == "Split (3)"),
+            n         = n(), .groups = "drop") |>
+  filter(n >= 3) |>
+  ggplot(aes(decade, pct_three, color = category)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2.5) +
+  scale_color_brewer(palette = "Set1", name = "Category") +
+  scale_x_continuous(breaks = seq(1900, 2020, 20)) +
+  labs(
+    title    = "Rise of Three-Way Prize Splits in Science",
+    subtitle = "% of prizes in each decade split among three laureates",
+    x        = "Decade",
+    y        = "% Three-Way Splits"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+share_data |>
+  count(share_type, name = "prizes") |>
+  mutate(pct = round(100 * prizes / sum(prizes), 1)) |>
+  arrange(share_type) |>
+  kable(col.names = c("Prize Structure", "Count", "% of All Prizes"))
+```
+
+---
+
+# Summary found
+
+| # | Question | Key Finding |
+|---|---|---|
+| 1 | Top countries by birth? | USA, Germany, UK but USA is partly built on immigrant laureate talent |
+| 2 | Most Nobel brain drain? | Germany (absolute count); Hungary & Poland (highest emigration rate, of abot 50%+) |
+| 3 | Is age at award rising? | Yes — around 12 to15 year increase since 1901. Economics oldest, Peace most stable |
+| 4 | Are prizes shared more? | Yes — threeway splits dominate modern Science; solo prizes nearly extinct there |
+
+]
