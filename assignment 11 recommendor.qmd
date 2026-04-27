@@ -1,0 +1,243 @@
+---
+title: "Assignment 11"
+author: "Leon Lin"
+date: "2026-04-16"
+output: html_document
+---
+
+
+```{r}
+set.seed(4)
+
+
+items <- c("The Matrix", "Inception", "Interstellar",
+           "Parasite", "Everything Everywhere", "WALL-E")
+users <- paste0("User", 1:10)
+
+raw_ratings <- matrix(c(
+  5, 3, 4, NA,  2,  1,
+  4, NA, 5,  3, NA,  2,
+ NA,  5, 4,  4,  5,  3,
+  2,  4,NA,  5,  3, NA,
+  5,  4, 3, NA,  4,  5,
+ NA,  3, 2,  4, NA,  5,
+  4,  5,NA,  3,  5,  4,
+  3, NA, 5,  4,  2, NA,
+  2,  4, 3, NA,  5,  4,
+  5,  3, 4,  5, NA,  2
+), nrow = 10, byrow = TRUE,
+   dimnames = list(users, items))
+
+raw_ratings
+```
+
+ Train data
+ 
+```{r}
+set.seed(7)
+
+known_idx <- which(!is.na(raw_ratings), arr.ind = TRUE)
+test_rows <- sample(nrow(known_idx), size = floor(0.20 * nrow(known_idx)))
+test_idx  <- known_idx[test_rows, ]
+
+train_mat <- raw_ratings
+for (i in seq_len(nrow(test_idx))) {
+  train_mat[test_idx[i, 1], test_idx[i, 2]] <- NA
+}
+
+cat("Known ratings in full matrix :", sum(!is.na(raw_ratings)), "\n")
+cat("Ratings in training set       :", sum(!is.na(train_mat)),  "\n")
+cat("Ratings held out for testing  :", nrow(test_idx),           "\n")
+```
+
+---
+
+
+
+```{r}
+user_means <- rowMeans(train_mat, na.rm = TRUE)
+
+centered <- train_mat
+for (u in seq_len(nrow(train_mat))) {
+  centered[u, ] <- train_mat[u, ] - user_means[u]
+}
+
+cat("User means (training):\n")
+round(user_means, 2)
+```
+
+
+```{r}
+cosine_sim <- function(a, b) {
+  common <- !is.na(a) & !is.na(b)
+  if (sum(common) < 2) return(NA_real_)       
+  num   <- sum(a[common] * b[common])
+  denom <- sqrt(sum(a[common]^2)) * sqrt(sum(b[common]^2))
+  if (denom == 0) return(0)
+  num / denom
+}
+
+n_users <- nrow(centered)
+sim_mat <- matrix(NA_real_, n_users, n_users,
+                  dimnames = list(users, users))
+
+for (i in 1:(n_users - 1)) {
+  for (j in (i + 1):n_users) {
+    s <- cosine_sim(centered[i, ], centered[j, ])
+    sim_mat[i, j] <- s
+    sim_mat[j, i] <- s
+  }
+}
+diag(sim_mat) <- 0 
+
+round(sim_mat, 3)
+```
+
+
+
+```{r}
+predict_rating <- function(user, item, sim_mat, train_mat,
+                           user_means, K = 3) {
+  u_idx <- which(rownames(train_mat) == user)
+  i_idx <- which(colnames(train_mat) == item)
+
+  sims       <- sim_mat[u_idx, ]
+  rated_item <- !is.na(train_mat[, i_idx])
+  rated_item[u_idx] <- FALSE          
+
+  eligible           <- sims * rated_item
+  eligible[is.na(eligible)] <- 0
+
+  
+  if (sum(eligible > 0) == 0) return(user_means[u_idx])
+
+  top_k <- order(eligible, decreasing = TRUE)[1:min(K, sum(eligible > 0))]
+  top_k <- top_k[eligible[top_k] > 0]
+
+  wts  <- sims[top_k]
+  devs <- train_mat[top_k, i_idx] - user_means[top_k]
+
+  pred <- user_means[u_idx] + sum(wts * devs) / sum(abs(wts))
+  max(1, min(5, pred))   
+}
+```
+
+
+```{r}
+top_n_recs <- function(user, n = 3, train_mat, sim_mat,
+                       user_means, K = 3) {
+  u_idx   <- which(rownames(train_mat) == user)
+  unrated <- which(is.na(train_mat[u_idx, ]))
+  if (length(unrated) == 0) return(data.frame())
+
+  preds <- sapply(names(unrated), function(item) {
+    predict_rating(user, item, sim_mat, train_mat, user_means, K)
+  })
+
+  df <- data.frame(
+    User             = user,
+    Item             = names(preds),
+    Predicted_Rating = round(preds, 2),
+    stringsAsFactors = FALSE
+  )
+  df[order(-df$Predicted_Rating)[1:min(n, nrow(df))], ]
+}
+
+rec_list <- lapply(users, function(u)
+  top_n_recs(u, n = 3, train_mat, sim_mat, user_means, K = 3))
+
+recs_df <- do.call(rbind, rec_list)
+rownames(recs_df) <- NULL
+
+recs_df
+```
+
+
+
+
+```{r}
+u        <- "User1"
+item     <- "Parasite"
+u_idx    <- which(rownames(train_mat) == u)
+i_idx    <- which(colnames(train_mat) == item)
+
+sims       <- sim_mat[u_idx, ]
+rated_mask <- !is.na(train_mat[, i_idx])
+rated_mask[u_idx] <- FALSE
+
+eligible <- sort(sims[rated_mask & !is.na(sims)], decreasing = TRUE)
+
+cat("User1's mean ratingg", round(user_means["User1"], 2), "\n\n")
+cat("Neighbours who rated 'Parasite' and their similarities")
+for (nb in names(eligible)) {
+  cat(sprintf("  %-8s  sim=%.3f  raw rating=%.0f  deviation=%.2f\n",
+              nb,
+              sims[nb],
+              train_mat[nb, item],
+              train_mat[nb, item] - user_means[nb]))
+}
+cat("\nPredicted rating for User1 → Parasite:",
+    round(predict_rating("User1", "Parasite",
+                         sim_mat, train_mat, user_means, K = 3), 2))
+```
+
+Evaluate the model
+
+```{r}
+preds_test <- numeric(nrow(test_idx))
+actuals    <- numeric(nrow(test_idx))
+
+for (i in seq_len(nrow(test_idx))) {
+  u    <- rownames(raw_ratings)[test_idx[i, 1]]
+  item <- colnames(raw_ratings)[test_idx[i, 2]]
+  preds_test[i] <- predict_rating(u, item, sim_mat, train_mat, user_means, K = 3)
+  actuals[i]    <- raw_ratings[test_idx[i, 1], test_idx[i, 2]]
+}
+
+rmse_cf  <- sqrt(mean((preds_test - actuals)^2))
+mae_cf   <- mean(abs(preds_test - actuals))
+
+g_mean       <- mean(train_mat, na.rm = TRUE)
+rmse_base    <- sqrt(mean((g_mean - actuals)^2))
+mae_base     <- mean(abs(g_mean - actuals))
+
+results <- data.frame(
+  Model          = c("Global Mean Baseline", "User-User CF (K=3)"),
+  RMSE           = round(c(rmse_base, rmse_cf), 4),
+  MAE            = round(c(mae_base,  mae_cf),  4)
+)
+results
+```
+
+```{r}
+test_eval <- data.frame(
+  Index   = seq_along(actuals),
+  Actual  = actuals,
+  CF_Pred = round(preds_test, 2),
+  BL_Pred = round(g_mean, 2)
+)
+
+cat("Test-set comparison (Actual vs. CF Prediction vs. Baseline):\n")
+test_eval
+```
+
+```{r}
+
+barplot(
+  results$RMSE,
+  names.arg = results$Model,
+  col       = c("#d9534f", "#5bc0de"),
+  ylim      = c(0, max(results$RMSE) * 1.35),
+  ylab      = "RMSE",
+  main      = "RMSE: Global Mean Baseline vs. User-User CF",
+  border    = NA
+)
+abline(h = 0)
+text(x   = c(0.7, 1.9),
+     y   = results$RMSE + 0.04,
+     labels = results$RMSE,
+     cex    = 0.9, font = 2)
+```
+
+---
+
