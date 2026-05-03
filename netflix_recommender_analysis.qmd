@@ -1,0 +1,185 @@
+---
+title: "Netflix Recommender System"
+author: "Leon"
+format: html
+---
+
+
+**1. Who are Netflix's target users?**
+
+Netflix's primary "users" in the organizational sense are its **content licensors, original content studios, and advertisers** — the partners who supply or fund the content that fills the platform. Internally, Netflix's product and engineering teams also act as users of recommendation infrastructure when making decisions about content acquisition, budgeting, and retention strategy.
+
+**2. What are Netflix's key goals?**
+
+- **Subscriber retention:** Reduce monthly churn by keeping subscribers engaged long enough to renew.
+- **Maximizing viewing hours:** Longer session times increase perceived value and reduce cancellation likelihood.
+- **Efficient content investment:** Use recommendation data to inform which original content to greenlight and which licensed titles to renew, reducing costly guesswork.
+- **Monetizing the ad-supported tier:** Since launching its ad-supported plan in 2022, Netflix aims to match viewers with content that also maximizes ad relevance and CPM rates for advertisers.
+- **Global scalability:** Serve personalized experiences across 190+ countries with vastly different content libraries, languages, and cultural preferences.
+
+**3. How does the recommender system help Netflix accomplish those goals?**
+
+The recommender system is one of Netflix's primary tools for reducing churn and maximizing engagement. By surfacing the right content at the right time, it reduces the likelihood that a subscriber abandons the platform due to decision fatigue or inability to find something appealing. Netflix has publicly stated that its recommendation engine saves the company an estimated $1 billion per year in avoided churn. The system also generates the behavioral data Netflix needs to make content investment decisions — watching patterns signal what genres, formats, and narratives resonate most with different subscriber segments.
+
+---
+
+### Scenario Design: Netflix's Customers (Subscribers)
+
+**1. Who are Netflix's target users?**
+
+Netflix serves an extremely diverse global subscriber base. Key user segments include:
+
+- **Casual viewers** who watch a few hours per week and need low-effort content discovery.
+- **Binge-watchers** who start a series and watch multiple episodes or full seasons in a sitting.
+- **Family/household accounts** where multiple profiles coexist with very different tastes.
+- **Non-English-speaking audiences** who need culturally relevant, locally produced content surfaced prominently.
+- **Lapsed returners** who cancel and resubscribe, needing to be re-engaged quickly.
+
+**2. What are their key goals?**
+
+- **Find something good to watch quickly**, without browsing for extended periods.
+- **Discover new titles they wouldn't have found on their own** — especially in genres or languages they haven't explored.
+- **Continue or complete content they've already started**, without losing their place.
+- **Trust that recommendations are personally relevant**, not generic or driven by advertising.
+- **Share an account with household members** without their recommendations being polluted by others' watch histories.
+
+**3. How does the recommender system help them accomplish those goals?**
+
+A well-functioning recommender system reduces the "paradox of choice" — the anxiety caused by too many options — by narrowing the visible catalog to a personalized, curated subset. It surfaces new titles through rows like *"Because you watched..."*, *"Top Picks for [Name]"*, and genre-specific recommendations. The *Continue Watching* row directly serves the goal of resumption. Profile separation helps each household member maintain a distinct recommendation context. Autoplay previews and match percentage scores (previously displayed) help subscribers make faster decisions.
+
+---
+
+## Part 2: Reverse Engineering the Netflix Recommender System
+
+### Platform Interface Observations
+
+By examining the Netflix interface directly, the following recommendation surfaces are observable:
+
+| Row / Feature | Purpose |
+|---|---|
+| **Top Picks for [Name]** | Highest-confidence personalized recommendations |
+| **Continue Watching** | Resume in-progress content |
+| **Because you watched [X]** | Item-to-item similarity signals |
+| **Trending Now** | Popularity-based (global or regional) |
+| **New Releases** | Recency-based, filtered by inferred taste |
+| **[Genre] You May Like** | Genre affinity rows |
+| **My List** | User-curated watchlist |
+| **Artwork / Thumbnails** | Personalized per user (different users see different artwork for same title) |
+
+A key observation is that **the same title appears differently for different users** — Netflix personalizes not just the list of recommended titles but also the **thumbnail artwork** displayed for each title, selecting images that match a given user's inferred preferences (e.g., showing an action scene vs. a romantic scene for the same film depending on the viewer's genre history).
+
+---
+
+### Inferred Technical Architecture
+
+Based on Netflix's published research papers, engineering blog posts, and the observable behavior of the platform, the following components likely underpin the recommendation system:
+
+#### 1. Collaborative Filtering
+
+Netflix pioneered large-scale collaborative filtering during the Netflix Prize competition (2006–2009). The core idea is that users with similar past behavior will have similar future preferences. Two variants are in use:
+
+- **User-user collaborative filtering:** Find users with similar watch histories and recommend what they liked.
+- **Item-item collaborative filtering:** Find titles similar to what a user has already watched or rated highly (similar to the Amazon item-to-item approach described by Linden, Smith & York, 2003).
+
+#### 2. Matrix Factorization / Latent Factor Models
+
+Netflix uses advanced matrix factorization techniques (SVD, ALS) to decompose the user-item interaction matrix into latent feature vectors representing hidden "taste dimensions." A user might score high on a "slow-burn thriller" dimension and low on a "family comedy" dimension, and recommendations are made by matching item feature vectors to user feature vectors.
+
+#### 3. Deep Learning & Neural Collaborative Filtering
+
+More recent Netflix systems incorporate neural networks — including recurrent neural networks (RNNs) and transformer-based models — to model **sequential viewing behavior**. If a user just finished a dark crime drama, the model weighs recent behavior more heavily than older history.
+
+#### 4. Contextual Signals
+
+The system incorporates real-time contextual data including:
+
+- **Time of day / day of week** (weeknight vs. weekend viewing patterns differ)
+- **Device type** (mobile users tend to prefer shorter content)
+- **Current session length** (how long the user has already been browsing)
+- **Household vs. individual viewing context**
+
+#### 5. Content-Based Features
+
+Metadata about each title — genre, director, cast, runtime, language, MPAA rating, tone — is encoded as features and used to bootstrap recommendations for new titles with little viewing history (the "cold start" problem).
+
+#### 6. Personalized Artwork / Thumbnail Selection
+
+Netflix uses a **multi-armed bandit** approach to select the best thumbnail image per title per user. Different images are shown to different user segments, and click-through rates are monitored to learn which artwork resonates most with each segment.
+
+#### 7. A/B Testing Infrastructure
+
+All recommendation changes are tested through Netflix's large-scale A/B testing platform. Hundreds of experiments run simultaneously, measuring metrics such as play rate, completion rate, and retention.
+
+---
+
+### Data Inputs Used by the System
+
+| Data Type | Examples |
+|---|---|
+| **Explicit feedback** | Thumbs up / thumbs down (replaced star ratings in 2017) |
+| **Implicit feedback** | Watch time, completion rate, rewatches, scroll-past behavior |
+| **Search queries** | What users search for but may not find |
+| **Browsing behavior** | Which rows a user scrolls past vs. engages with |
+| **Profile metadata** | Age, language, country, device |
+| **Social signals** | (Limited) — Netflix does not heavily incorporate social graph data |
+
+---
+
+## Part 3: Recommendations for Improvement
+
+The following are specific, actionable recommendations for improving Netflix's recommendation capabilities:
+
+### 1. Improve Mood-Based Filtering
+
+**Problem:** Netflix currently recommends based on genre and past behavior, but does not account for a user's current **mood or intent**. A subscriber who just watched a devastating drama might not want another — yet the system may continue surfacing similar content.
+
+**Recommendation:** Introduce a lightweight **mood selector** at session start (e.g., "I'm in the mood for something: Funny / Exciting / Relaxing / Thought-provoking"). This input could temporarily modulate recommendations for that session without permanently altering the user's preference model. Similar approaches have been explored in music (Spotify's mood playlists) and could be adapted for video.
+
+---
+
+### 2. Address the "Household Bleed" Problem More Aggressively
+
+**Problem:** Despite profile separation, recommendation contamination across profiles remains common in households — particularly when family members log in to the wrong profile or when a main profile is shared informally.
+
+**Recommendation:** Implement **passive profile detection** using behavioral signals (watch speed, genre selection, device, time of day) to infer whether the current viewer matches the logged-in profile, and prompt a gentle profile switch suggestion when a mismatch is likely. This is technically feasible given the behavioral data Netflix already collects.
+
+---
+
+### 3. Add a "Surprise Me" Discovery Mode
+
+**Problem:** The recommender system optimizes heavily for **exploitation** (showing users more of what they already like), which can create filter bubbles and reduce long-term catalog exploration. Users may never discover genres they'd enjoy if initially unfamiliar.
+
+**Recommendation:** Introduce a dedicated **Discovery Mode** or "Surprise Me" button that deliberately surfaces high-quality titles outside the user's typical genres, with an explanation (e.g., *"This is outside your usual taste, but users similar to you loved it"*). This serves long-term engagement by expanding the user's content repertoire and reducing eventual content fatigue.
+
+---
+
+### 4. Leverage Post-Completion Feedback More Effectively
+
+**Problem:** Netflix's current thumbs up/down system captures broad sentiment but is rarely used and poorly timed (the prompt, if shown, appears while the next episode autoplays).
+
+**Recommendation:** Implement **lightweight post-completion micro-surveys** — a single-question prompt after a title is fully completed (not mid-episode) asking something like *"Did this match what you expected?"* or *"Would you recommend this to someone like you?"* This captures more nuanced signal than a binary thumb and can be used to refine both the recommendation model and the thumbnail/synopsis accuracy.
+
+---
+
+### 5. Improve Cold-Start Handling for New Users
+
+**Problem:** New subscribers are shown generic "popular content" until enough viewing data accumulates to personalize effectively. This early experience may be uninspiring and contribute to early churn.
+
+**Recommendation:** Expand and gamify the **onboarding preference survey** (Netflix currently shows a small set of titles and asks users to indicate familiarity/interest). A more engaging, visual onboarding flow — asking users to select favorite genres, indicate past titles they've enjoyed on other platforms, and set mood/tone preferences — would dramatically accelerate the cold-start resolution and create a more personalized Day 1 experience.
+
+---
+
+## Conclusion
+
+Netflix's recommender system is among the most sophisticated in the world, combining collaborative filtering, matrix factorization, deep learning, contextual signals, and personalized content presentation. Applying the Scenario Design framework reveals that the system serves both Netflix's business goal of reducing churn and subscribers' goal of efficient content discovery. However, gaps remain in mood-aware recommendations, household profile management, serendipitous discovery, post-viewing feedback collection, and new-user onboarding. Addressing these areas represents meaningful opportunities to improve the recommendation experience for both the organization and its subscribers.
+
+---
+
+## References
+
+- Linden, G., Smith, B., & York, J. (2003). Amazon.com recommendations: Item-to-item collaborative filtering. *IEEE Internet Computing*, 7(1), 76–80.
+- Spangher, A. (2015). Building the next New York Times recommendation engine. *NYT Open Blog*.
+- Gomez-Uribe, C. A., & Hunt, N. (2016). The Netflix recommender system: Algorithms, business value, and innovation. *ACM Transactions on Management Information Systems*, 6(4), 1–19.
+- Steck, H., Baltrunas, L., Elahi, M., Liang, D., Raiber, F., & Basilico, J. (2021). Deep learning for recommender systems: A Netflix case study. *AI Magazine*, 42(3), 7–18.
+- Netflix Technology Blog. (Various). https://netflixtechblog.com
+- Temkin, B. D. (2004). Scenario design: A disciplined approach to customer experience. *Forrester Research*.

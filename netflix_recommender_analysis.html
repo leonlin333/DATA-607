@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.8.27">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="author" content="Leon">
+
+<title>Netflix Recommender System</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="netflix_recommender_analysis_files/libs/clipboard/clipboard.min.js"></script>
+<script src="netflix_recommender_analysis_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="netflix_recommender_analysis_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="netflix_recommender_analysis_files/libs/quarto-html/axe/axe-check.js" type="module"></script>
+<script src="netflix_recommender_analysis_files/libs/quarto-html/popper.min.js"></script>
+<script src="netflix_recommender_analysis_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="netflix_recommender_analysis_files/libs/quarto-html/anchor.min.js"></script>
+<link href="netflix_recommender_analysis_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="netflix_recommender_analysis_files/libs/quarto-html/quarto-syntax-highlighting-ed96de9b727972fe78a7b5d16c58bf87.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="netflix_recommender_analysis_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="netflix_recommender_analysis_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="netflix_recommender_analysis_files/libs/bootstrap/bootstrap-d6a003b94517c951b2d65075d42fb01b.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+
+
+</head>
+
+<body class="fullcontent quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Netflix Recommender System</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    <div>
+    <div class="quarto-title-meta-heading">Author</div>
+    <div class="quarto-title-meta-contents">
+             <p>Leon </p>
+          </div>
+  </div>
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p><strong>1. Who are Netflix’s target users?</strong></p>
+<p>Netflix’s primary “users” in the organizational sense are its <strong>content licensors, original content studios, and advertisers</strong> — the partners who supply or fund the content that fills the platform. Internally, Netflix’s product and engineering teams also act as users of recommendation infrastructure when making decisions about content acquisition, budgeting, and retention strategy.</p>
+<p><strong>2. What are Netflix’s key goals?</strong></p>
+<ul>
+<li><strong>Subscriber retention:</strong> Reduce monthly churn by keeping subscribers engaged long enough to renew.</li>
+<li><strong>Maximizing viewing hours:</strong> Longer session times increase perceived value and reduce cancellation likelihood.</li>
+<li><strong>Efficient content investment:</strong> Use recommendation data to inform which original content to greenlight and which licensed titles to renew, reducing costly guesswork.</li>
+<li><strong>Monetizing the ad-supported tier:</strong> Since launching its ad-supported plan in 2022, Netflix aims to match viewers with content that also maximizes ad relevance and CPM rates for advertisers.</li>
+<li><strong>Global scalability:</strong> Serve personalized experiences across 190+ countries with vastly different content libraries, languages, and cultural preferences.</li>
+</ul>
+<p><strong>3. How does the recommender system help Netflix accomplish those goals?</strong></p>
+<p>The recommender system is one of Netflix’s primary tools for reducing churn and maximizing engagement. By surfacing the right content at the right time, it reduces the likelihood that a subscriber abandons the platform due to decision fatigue or inability to find something appealing. Netflix has publicly stated that its recommendation engine saves the company an estimated $1 billion per year in avoided churn. The system also generates the behavioral data Netflix needs to make content investment decisions — watching patterns signal what genres, formats, and narratives resonate most with different subscriber segments.</p>
+<hr>
+<section id="scenario-design-netflixs-customers-subscribers" class="level3">
+<h3 class="anchored" data-anchor-id="scenario-design-netflixs-customers-subscribers">Scenario Design: Netflix’s Customers (Subscribers)</h3>
+<p><strong>1. Who are Netflix’s target users?</strong></p>
+<p>Netflix serves an extremely diverse global subscriber base. Key user segments include:</p>
+<ul>
+<li><strong>Casual viewers</strong> who watch a few hours per week and need low-effort content discovery.</li>
+<li><strong>Binge-watchers</strong> who start a series and watch multiple episodes or full seasons in a sitting.</li>
+<li><strong>Family/household accounts</strong> where multiple profiles coexist with very different tastes.</li>
+<li><strong>Non-English-speaking audiences</strong> who need culturally relevant, locally produced content surfaced prominently.</li>
+<li><strong>Lapsed returners</strong> who cancel and resubscribe, needing to be re-engaged quickly.</li>
+</ul>
+<p><strong>2. What are their key goals?</strong></p>
+<ul>
+<li><strong>Find something good to watch quickly</strong>, without browsing for extended periods.</li>
+<li><strong>Discover new titles they wouldn’t have found on their own</strong> — especially in genres or languages they haven’t explored.</li>
+<li><strong>Continue or complete content they’ve already started</strong>, without losing their place.</li>
+<li><strong>Trust that recommendations are personally relevant</strong>, not generic or driven by advertising.</li>
+<li><strong>Share an account with household members</strong> without their recommendations being polluted by others’ watch histories.</li>
+</ul>
+<p><strong>3. How does the recommender system help them accomplish those goals?</strong></p>
+<p>A well-functioning recommender system reduces the “paradox of choice” — the anxiety caused by too many options — by narrowing the visible catalog to a personalized, curated subset. It surfaces new titles through rows like <em>“Because you watched…”</em>, <em>“Top Picks for [Name]”</em>, and genre-specific recommendations. The <em>Continue Watching</em> row directly serves the goal of resumption. Profile separation helps each household member maintain a distinct recommendation context. Autoplay previews and match percentage scores (previously displayed) help subscribers make faster decisions.</p>
+<hr>
+</section>
+<section id="part-2-reverse-engineering-the-netflix-recommender-system" class="level2">
+<h2 class="anchored" data-anchor-id="part-2-reverse-engineering-the-netflix-recommender-system">Part 2: Reverse Engineering the Netflix Recommender System</h2>
+<section id="platform-interface-observations" class="level3">
+<h3 class="anchored" data-anchor-id="platform-interface-observations">Platform Interface Observations</h3>
+<p>By examining the Netflix interface directly, the following recommendation surfaces are observable:</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Row / Feature</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Top Picks for [Name]</strong></td>
+<td>Highest-confidence personalized recommendations</td>
+</tr>
+<tr class="even">
+<td><strong>Continue Watching</strong></td>
+<td>Resume in-progress content</td>
+</tr>
+<tr class="odd">
+<td><strong>Because you watched [X]</strong></td>
+<td>Item-to-item similarity signals</td>
+</tr>
+<tr class="even">
+<td><strong>Trending Now</strong></td>
+<td>Popularity-based (global or regional)</td>
+</tr>
+<tr class="odd">
+<td><strong>New Releases</strong></td>
+<td>Recency-based, filtered by inferred taste</td>
+</tr>
+<tr class="even">
+<td><strong>[Genre] You May Like</strong></td>
+<td>Genre affinity rows</td>
+</tr>
+<tr class="odd">
+<td><strong>My List</strong></td>
+<td>User-curated watchlist</td>
+</tr>
+<tr class="even">
+<td><strong>Artwork / Thumbnails</strong></td>
+<td>Personalized per user (different users see different artwork for same title)</td>
+</tr>
+</tbody>
+</table>
+<p>A key observation is that <strong>the same title appears differently for different users</strong> — Netflix personalizes not just the list of recommended titles but also the <strong>thumbnail artwork</strong> displayed for each title, selecting images that match a given user’s inferred preferences (e.g., showing an action scene vs.&nbsp;a romantic scene for the same film depending on the viewer’s genre history).</p>
+<hr>
+</section>
+<section id="inferred-technical-architecture" class="level3">
+<h3 class="anchored" data-anchor-id="inferred-technical-architecture">Inferred Technical Architecture</h3>
+<p>Based on Netflix’s published research papers, engineering blog posts, and the observable behavior of the platform, the following components likely underpin the recommendation system:</p>
+<section id="collaborative-filtering" class="level4">
+<h4 class="anchored" data-anchor-id="collaborative-filtering">1. Collaborative Filtering</h4>
+<p>Netflix pioneered large-scale collaborative filtering during the Netflix Prize competition (2006–2009). The core idea is that users with similar past behavior will have similar future preferences. Two variants are in use:</p>
+<ul>
+<li><strong>User-user collaborative filtering:</strong> Find users with similar watch histories and recommend what they liked.</li>
+<li><strong>Item-item collaborative filtering:</strong> Find titles similar to what a user has already watched or rated highly (similar to the Amazon item-to-item approach described by Linden, Smith &amp; York, 2003).</li>
+</ul>
+</section>
+<section id="matrix-factorization-latent-factor-models" class="level4">
+<h4 class="anchored" data-anchor-id="matrix-factorization-latent-factor-models">2. Matrix Factorization / Latent Factor Models</h4>
+<p>Netflix uses advanced matrix factorization techniques (SVD, ALS) to decompose the user-item interaction matrix into latent feature vectors representing hidden “taste dimensions.” A user might score high on a “slow-burn thriller” dimension and low on a “family comedy” dimension, and recommendations are made by matching item feature vectors to user feature vectors.</p>
+</section>
+<section id="deep-learning-neural-collaborative-filtering" class="level4">
+<h4 class="anchored" data-anchor-id="deep-learning-neural-collaborative-filtering">3. Deep Learning &amp; Neural Collaborative Filtering</h4>
+<p>More recent Netflix systems incorporate neural networks — including recurrent neural networks (RNNs) and transformer-based models — to model <strong>sequential viewing behavior</strong>. If a user just finished a dark crime drama, the model weighs recent behavior more heavily than older history.</p>
+</section>
+<section id="contextual-signals" class="level4">
+<h4 class="anchored" data-anchor-id="contextual-signals">4. Contextual Signals</h4>
+<p>The system incorporates real-time contextual data including:</p>
+<ul>
+<li><strong>Time of day / day of week</strong> (weeknight vs.&nbsp;weekend viewing patterns differ)</li>
+<li><strong>Device type</strong> (mobile users tend to prefer shorter content)</li>
+<li><strong>Current session length</strong> (how long the user has already been browsing)</li>
+<li><strong>Household vs.&nbsp;individual viewing context</strong></li>
+</ul>
+</section>
+<section id="content-based-features" class="level4">
+<h4 class="anchored" data-anchor-id="content-based-features">5. Content-Based Features</h4>
+<p>Metadata about each title — genre, director, cast, runtime, language, MPAA rating, tone — is encoded as features and used to bootstrap recommendations for new titles with little viewing history (the “cold start” problem).</p>
+</section>
+<section id="personalized-artwork-thumbnail-selection" class="level4">
+<h4 class="anchored" data-anchor-id="personalized-artwork-thumbnail-selection">6. Personalized Artwork / Thumbnail Selection</h4>
+<p>Netflix uses a <strong>multi-armed bandit</strong> approach to select the best thumbnail image per title per user. Different images are shown to different user segments, and click-through rates are monitored to learn which artwork resonates most with each segment.</p>
+</section>
+<section id="ab-testing-infrastructure" class="level4">
+<h4 class="anchored" data-anchor-id="ab-testing-infrastructure">7. A/B Testing Infrastructure</h4>
+<p>All recommendation changes are tested through Netflix’s large-scale A/B testing platform. Hundreds of experiments run simultaneously, measuring metrics such as play rate, completion rate, and retention.</p>
+<hr>
+</section>
+</section>
+<section id="data-inputs-used-by-the-system" class="level3">
+<h3 class="anchored" data-anchor-id="data-inputs-used-by-the-system">Data Inputs Used by the System</h3>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Data Type</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Explicit feedback</strong></td>
+<td>Thumbs up / thumbs down (replaced star ratings in 2017)</td>
+</tr>
+<tr class="even">
+<td><strong>Implicit feedback</strong></td>
+<td>Watch time, completion rate, rewatches, scroll-past behavior</td>
+</tr>
+<tr class="odd">
+<td><strong>Search queries</strong></td>
+<td>What users search for but may not find</td>
+</tr>
+<tr class="even">
+<td><strong>Browsing behavior</strong></td>
+<td>Which rows a user scrolls past vs.&nbsp;engages with</td>
+</tr>
+<tr class="odd">
+<td><strong>Profile metadata</strong></td>
+<td>Age, language, country, device</td>
+</tr>
+<tr class="even">
+<td><strong>Social signals</strong></td>
+<td>(Limited) — Netflix does not heavily incorporate social graph data</td>
+</tr>
+</tbody>
+</table>
+<hr>
+</section>
+</section>
+<section id="part-3-recommendations-for-improvement" class="level2">
+<h2 class="anchored" data-anchor-id="part-3-recommendations-for-improvement">Part 3: Recommendations for Improvement</h2>
+<p>The following are specific, actionable recommendations for improving Netflix’s recommendation capabilities:</p>
+<section id="improve-mood-based-filtering" class="level3">
+<h3 class="anchored" data-anchor-id="improve-mood-based-filtering">1. Improve Mood-Based Filtering</h3>
+<p><strong>Problem:</strong> Netflix currently recommends based on genre and past behavior, but does not account for a user’s current <strong>mood or intent</strong>. A subscriber who just watched a devastating drama might not want another — yet the system may continue surfacing similar content.</p>
+<p><strong>Recommendation:</strong> Introduce a lightweight <strong>mood selector</strong> at session start (e.g., “I’m in the mood for something: Funny / Exciting / Relaxing / Thought-provoking”). This input could temporarily modulate recommendations for that session without permanently altering the user’s preference model. Similar approaches have been explored in music (Spotify’s mood playlists) and could be adapted for video.</p>
+<hr>
+</section>
+<section id="address-the-household-bleed-problem-more-aggressively" class="level3">
+<h3 class="anchored" data-anchor-id="address-the-household-bleed-problem-more-aggressively">2. Address the “Household Bleed” Problem More Aggressively</h3>
+<p><strong>Problem:</strong> Despite profile separation, recommendation contamination across profiles remains common in households — particularly when family members log in to the wrong profile or when a main profile is shared informally.</p>
+<p><strong>Recommendation:</strong> Implement <strong>passive profile detection</strong> using behavioral signals (watch speed, genre selection, device, time of day) to infer whether the current viewer matches the logged-in profile, and prompt a gentle profile switch suggestion when a mismatch is likely. This is technically feasible given the behavioral data Netflix already collects.</p>
+<hr>
+</section>
+<section id="add-a-surprise-me-discovery-mode" class="level3">
+<h3 class="anchored" data-anchor-id="add-a-surprise-me-discovery-mode">3. Add a “Surprise Me” Discovery Mode</h3>
+<p><strong>Problem:</strong> The recommender system optimizes heavily for <strong>exploitation</strong> (showing users more of what they already like), which can create filter bubbles and reduce long-term catalog exploration. Users may never discover genres they’d enjoy if initially unfamiliar.</p>
+<p><strong>Recommendation:</strong> Introduce a dedicated <strong>Discovery Mode</strong> or “Surprise Me” button that deliberately surfaces high-quality titles outside the user’s typical genres, with an explanation (e.g., <em>“This is outside your usual taste, but users similar to you loved it”</em>). This serves long-term engagement by expanding the user’s content repertoire and reducing eventual content fatigue.</p>
+<hr>
+</section>
+<section id="leverage-post-completion-feedback-more-effectively" class="level3">
+<h3 class="anchored" data-anchor-id="leverage-post-completion-feedback-more-effectively">4. Leverage Post-Completion Feedback More Effectively</h3>
+<p><strong>Problem:</strong> Netflix’s current thumbs up/down system captures broad sentiment but is rarely used and poorly timed (the prompt, if shown, appears while the next episode autoplays).</p>
+<p><strong>Recommendation:</strong> Implement <strong>lightweight post-completion micro-surveys</strong> — a single-question prompt after a title is fully completed (not mid-episode) asking something like <em>“Did this match what you expected?”</em> or <em>“Would you recommend this to someone like you?”</em> This captures more nuanced signal than a binary thumb and can be used to refine both the recommendation model and the thumbnail/synopsis accuracy.</p>
+<hr>
+</section>
+<section id="improve-cold-start-handling-for-new-users" class="level3">
+<h3 class="anchored" data-anchor-id="improve-cold-start-handling-for-new-users">5. Improve Cold-Start Handling for New Users</h3>
+<p><strong>Problem:</strong> New subscribers are shown generic “popular content” until enough viewing data accumulates to personalize effectively. This early experience may be uninspiring and contribute to early churn.</p>
+<p><strong>Recommendation:</strong> Expand and gamify the <strong>onboarding preference survey</strong> (Netflix currently shows a small set of titles and asks users to indicate familiarity/interest). A more engaging, visual onboarding flow — asking users to select favorite genres, indicate past titles they’ve enjoyed on other platforms, and set mood/tone preferences — would dramatically accelerate the cold-start resolution and create a more personalized Day 1 experience.</p>
+<hr>
+</section>
+</section>
+<section id="conclusion" class="level2">
+<h2 class="anchored" data-anchor-id="conclusion">Conclusion</h2>
+<p>Netflix’s recommender system is among the most sophisticated in the world, combining collaborative filtering, matrix factorization, deep learning, contextual signals, and personalized content presentation. Applying the Scenario Design framework reveals that the system serves both Netflix’s business goal of reducing churn and subscribers’ goal of efficient content discovery. However, gaps remain in mood-aware recommendations, household profile management, serendipitous discovery, post-viewing feedback collection, and new-user onboarding. Addressing these areas represents meaningful opportunities to improve the recommendation experience for both the organization and its subscribers.</p>
+<hr>
+</section>
+<section id="references" class="level2">
+<h2 class="anchored" data-anchor-id="references">References</h2>
+<ul>
+<li>Linden, G., Smith, B., &amp; York, J. (2003). Amazon.com recommendations: Item-to-item collaborative filtering. <em>IEEE Internet Computing</em>, 7(1), 76–80.</li>
+<li>Spangher, A. (2015). Building the next New York Times recommendation engine. <em>NYT Open Blog</em>.</li>
+<li>Gomez-Uribe, C. A., &amp; Hunt, N. (2016). The Netflix recommender system: Algorithms, business value, and innovation. <em>ACM Transactions on Management Information Systems</em>, 6(4), 1–19.</li>
+<li>Steck, H., Baltrunas, L., Elahi, M., Liang, D., Raiber, F., &amp; Basilico, J. (2021). Deep learning for recommender systems: A Netflix case study. <em>AI Magazine</em>, 42(3), 7–18.</li>
+<li>Netflix Technology Blog. (Various). https://netflixtechblog.com</li>
+<li>Temkin, B. D. (2004). Scenario design: A disciplined approach to customer experience. <em>Forrester Research</em>.</li>
+</ul>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>
