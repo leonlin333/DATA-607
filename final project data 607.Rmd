@@ -1,0 +1,524 @@
+---
+title: "The U.S. Job Market: Openings, Quits, Layoffs, and What the Data Says"
+author: "Leon"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+---
+
+```{r auto-install, include=FALSE}
+# Automatically install any missing packages — no manual setup needed
+required_packages <- c(
+  "tidyverse", "lubridate", "scales", "corrplot",
+  "knitr", "kableExtra", "prophet", "broom", "patchwork"
+)
+
+installed <- rownames(installed.packages())
+to_install <- required_packages[!(required_packages %in% installed)]
+if (length(to_install) > 0) {
+  install.packages(to_install, repos = "https://cloud.r-project.org", quiet = TRUE)
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 10, fig.height = 5)
+
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(corrplot)
+library(knitr)
+library(kableExtra)
+library(prophet)
+library(broom)
+library(patchwork)
+```
+
+---
+
+## 1. Motivation
+
+The U.S. labor market has gone through dramatic swings over the past decade a historic tightening post-pandemic, record job openings in between 2021–2022, a surge in people voluntaringly quitting dubbed the "Great Resignation," and then a gradual normalization through 2023–2024. As someone actively navigating this job market, I want to move beyond headlines and ask: **what do the numbers actually show?**
+
+Specifically, this project investigates the following :
+
+- How job openings, quit rates, and unemployment have moved together over time
+- Whether macro labor indicators can statistically predict unemployment
+- What a short-term forecast of job openings looks like going into 2025–2026
+
+This analysis follows the **OSEMN workflow**: Obtain → Scrub → Explore → Model → iNterpret.
+---
+
+## 2. Data Sources
+
+This project draws from **two distinct data source types**:
+
+1. **FRED Public CSV Downloads** (Federal Reserve Bank of St. Louis) — FRED provides direct public CSV downloads for every economic series at a stable URL, requiring no API key or account. This gives us clean monthly time-series data for four key labor market indicators.
+
+2. **BLS JOLTS Flat File** (Bureau of Labor Statistics) — a raw tab delimited text file downloaded directly from the BLS public data server. Unlike the clean FRED CSVs, this file requires substantial cleaning and restructuring before it can be used.
+
+---
+
+## 3. Data Acquisition
+
+### 3.1 Source 1: FRED Public CSV Downloads
+
+FRED makes every data series available as a direct CSV download at a public URL — no account or API key required.
+
+```{r load-fred, cache=TRUE}
+# Helper: download a FRED series by ID and return a clean two-column dataframe
+# Uses download.file() to a temp file for broad HTTPS compatibility
+load_fred <- function(series_id, col_name,
+                      start = "2010-01-01", end = "2024-12-01") {
+  url      <- paste0("https://fred.stlouisfed.org/graph/fredgraph.csv?id=", series_id)
+  tmp      <- tempfile(fileext = ".csv")
+  download.file(url, destfile = tmp, mode = "wb", quiet = TRUE)
+  df       <- read_csv(tmp, col_types = cols(.default = col_character()),
+                       show_col_types = FALSE)
+  colnames(df) <- c("date", col_name)
+  df %>%
+    mutate(date      = as.Date(date),
+           !!col_name := as.numeric(.data[[col_name]])) %>%
+    filter(date >= as.Date(start), date <= as.Date(end))
+}
+
+# Pull four series
+job_openings  <- load_fred("JTSJOL",   "job_openings_k")    # Job Openings (thousands)
+unemployment  <- load_fred("UNRATE",   "unemployment_rate")  # Unemployment Rate (%)
+quit_rate     <- load_fred("JTSQUR",   "quit_rate")          # Quits Rate (%)
+fed_funds     <- load_fred("FEDFUNDS", "fed_funds_rate")     # Fed Funds Rate (%)
+
+cat("Rows loaded per series:\n")
+cat("  Job Openings: ",  nrow(job_openings),  "\n")
+cat("  Unemployment: ",  nrow(unemployment),  "\n")
+cat("  Quit Rate:    ",  nrow(quit_rate),     "\n")
+cat("  Fed Funds:    ",  nrow(fed_funds),     "\n")
+```
+
+### 3.2 Source 2: BLS JOLTS Flat File
+
+The BLS publishes raw JOLTS data as a tab-delimited flat file at a public URL. Unlike the FRED CSVs, this file contains all JOLTS series in one file and requires filtering, parsing, and restructuring.
+
+```{r load-bls, cache=TRUE}
+bls_url <- "https://download.bls.gov/pub/time.series/jt/jt.data.0.Current"
+
+bls_raw <- tryCatch({
+  tmp_bls <- tempfile(fileext = ".txt")
+  download.file(bls_url, destfile = tmp_bls, mode = "wb", quiet = TRUE)
+  read_tsv(tmp_bls, col_types = cols(.default = "c"), show_col_types = FALSE)
+}, error = function(e) {
+  message("BLS file could not be downloaded: ", e$message)
+  NULL
+})
+
+if (!is.null(bls_raw)) {
+  cat("BLS file loaded:", nrow(bls_raw), "rows,", ncol(bls_raw), "columns\n")
+  cat("Column names:", paste(names(bls_raw), collapse = ", "), "\n")
+} else {
+  cat("BLS file unavailable — cross-validation section will be skipped.\n")
+}
+```
+
+---
+
+## 4. Data Cleaning & Transformation
+
+### 4.1 Merge and Transform FRED Data
+
+```{r clean-fred}
+# Join all four FRED series into one wide dataframe
+fred_wide <- job_openings %>%
+  inner_join(unemployment, by = "date") %>%
+  inner_join(quit_rate,    by = "date") %>%
+  inner_join(fed_funds,    by = "date") %>%
+  mutate(
+    job_openings_m = job_openings_k / 1000,  # Convert thousands -> millions
+    year           = year(date),
+    month          = month(date)
+  ) %>%
+  filter(!is.na(job_openings_m), !is.na(unemployment_rate),
+         !is.na(quit_rate),      !is.na(fed_funds_rate))
+
+# --- DATA TRANSFORMATION: Wide to Long ---
+# Pivot to long format for multi-series time-series plotting
+fred_long <- fred_wide %>%
+  select(date, job_openings_m, unemployment_rate, quit_rate, fed_funds_rate) %>%
+  pivot_longer(
+    cols      = -date,
+    names_to  = "indicator",
+    values_to = "value"
+  ) %>%
+  mutate(indicator = recode(indicator,
+    "job_openings_m"    = "Job Openings (millions)",
+    "unemployment_rate" = "Unemployment Rate (%)",
+    "quit_rate"         = "Quit Rate (%)",
+    "fed_funds_rate"    = "Fed Funds Rate (%)"
+  ))
+
+head(fred_long, 8) %>%
+  kable(caption = "Sample: Long-format FRED data after pivot_longer()") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+### 4.2 Clean BLS Flat File
+
+The BLS flat file requires trimming whitespace, filtering to the total nonfarm series, removing annual averages (period M13), parsing period strings (M01-M12) into dates, and filtering to the study window.
+
+```{r clean-bls}
+if (!is.null(bls_raw)) {
+  bls_clean <- bls_raw %>%
+    mutate(across(where(is.character), str_trim)) %>%
+    filter(str_detect(series_id, "JTS00000000000000")) %>%
+    filter(period != "M13") %>%
+    mutate(
+      month_num = as.integer(str_remove(period, "M")),
+      year_num  = as.integer(year),
+      date      = make_date(year_num, month_num, 1L),
+      value     = as.numeric(value)
+    ) %>%
+    filter(!is.na(date),
+           date >= as.Date("2010-01-01"),
+           date <= as.Date("2024-12-01")) %>%
+    select(series_id, date, value) %>%
+    arrange(date)
+
+  cat("BLS series present after cleaning:\n")
+  bls_clean %>% count(series_id) %>% print()
+} else {
+  bls_clean <- NULL
+}
+```
+
+### 4.3 Summary Statistics
+
+```{r summary-stats}
+fred_wide %>%
+  select(job_openings_m, unemployment_rate, quit_rate, fed_funds_rate) %>%
+  summary() %>%
+  kable(caption = "Summary Statistics: Key Labor Market Indicators (2010-2024)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+---
+
+## 5. Exploratory Data Analysis
+
+### 5.1 All Indicators Over Time
+
+```{r plot-all-indicators}
+recessions <- data.frame(
+  start = as.Date("2020-02-01"),
+  end   = as.Date("2020-04-01")
+)
+
+ggplot(fred_long, aes(x = date, y = value, color = indicator)) +
+  geom_rect(data = recessions,
+            aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+            inherit.aes = FALSE, fill = "grey80", alpha = 0.5) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~ indicator, scales = "free_y", ncol = 2) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    title    = "U.S. Labor Market Indicators, 2010-2024",
+    subtitle = "Shaded area = COVID-19 recession (Feb-Apr 2020)",
+    x = NULL, y = "Value", color = NULL,
+    caption  = "Source: FRED (fred.stlouisfed.org)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none",
+        strip.text = element_text(face = "bold"))
+```
+
+### 5.2 The Great Resignation in Focus (2019-2023)
+
+```{r plot-great-resignation}
+fred_wide %>%
+  filter(date >= as.Date("2019-01-01"), date <= as.Date("2023-12-01")) %>%
+  select(date, job_openings_m, quit_rate) %>%
+  pivot_longer(-date, names_to = "indicator", values_to = "value") %>%
+  mutate(indicator = recode(indicator,
+    "job_openings_m" = "Job Openings (millions)",
+    "quit_rate"      = "Quit Rate (%)"
+  )) %>%
+  ggplot(aes(x = date, y = value, color = indicator)) +
+  geom_line(linewidth = 1.1) +
+  annotate("rect",
+           xmin = as.Date("2021-03-01"), xmax = as.Date("2022-06-01"),
+           ymin = -Inf, ymax = Inf, fill = "lightyellow", alpha = 0.4) +
+  annotate("text", x = as.Date("2021-10-01"), y = 11.8,
+           label = "\"Great Resignation\"\nPeak", size = 3.5, color = "darkorange") +
+  facet_wrap(~ indicator, scales = "free_y") +
+  scale_x_date(date_breaks = "6 months", date_labels = "%b %Y") +
+  scale_color_manual(values = c("#E41A1C", "#377EB8")) +
+  labs(
+    title    = "Job Openings and Quit Rate: The Great Resignation Era",
+    subtitle = "Both indicators peaked in 2021-2022 before declining sharply",
+    x = NULL, y = NULL, color = NULL,
+    caption  = "Source: FRED"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text  = element_text(face = "bold"))
+```
+
+### 5.3 Beveridge Curve (Job Openings vs. Unemployment)
+
+The **Beveridge Curve** plots job openings against unemployment over time. A healthy economy shows an inverse relationship; outward shifts suggest structural labor market mismatch between available workers and available jobs.
+
+```{r beveridge-curve}
+fred_wide %>%
+  mutate(era = case_when(
+    date < as.Date("2020-01-01")                                 ~ "Pre-COVID (2010-2019)",
+    date >= as.Date("2020-01-01") & date < as.Date("2021-07-01") ~ "COVID Shock (2020-mid 2021)",
+    date >= as.Date("2021-07-01") & date < as.Date("2023-01-01") ~ "Great Resignation (2021-2022)",
+    TRUE                                                          ~ "Normalization (2023-2024)"
+  )) %>%
+  ggplot(aes(x = unemployment_rate, y = job_openings_m, color = era)) +
+  geom_path(aes(group = 1), color = "grey70", linewidth = 0.4) +
+  geom_point(size = 2, alpha = 0.8) +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    title    = "Beveridge Curve: Job Openings vs. Unemployment Rate (2010-2024)",
+    subtitle = "Each point = one month. Path shows trajectory over time.",
+    x        = "Unemployment Rate (%)",
+    y        = "Job Openings (millions)",
+    color    = "Era",
+    caption  = "Source: FRED"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+```
+
+### 5.4 Job Openings Distribution by Era
+
+```{r boxplot-era}
+fred_wide %>%
+  mutate(era = case_when(
+    date < as.Date("2020-01-01")  ~ "Pre-COVID",
+    date < as.Date("2021-07-01")  ~ "COVID Shock",
+    date < as.Date("2023-01-01")  ~ "Great Resignation",
+    TRUE                          ~ "Normalization"
+  )) %>%
+  mutate(era = factor(era, levels = c("Pre-COVID", "COVID Shock",
+                                      "Great Resignation", "Normalization"))) %>%
+  ggplot(aes(x = era, y = job_openings_m, fill = era)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 21) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title   = "Distribution of Job Openings by Labor Market Era",
+    x       = NULL,
+    y       = "Job Openings (millions)",
+    fill    = NULL,
+    caption = "Source: FRED"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+```
+
+---
+
+## 6. Statistical Analysis
+
+### 6.1 Correlation Matrix
+
+```{r correlation-matrix}
+cor_data <- fred_wide %>%
+  select(job_openings_m, unemployment_rate, quit_rate, fed_funds_rate) %>%
+  drop_na()
+
+cor_matrix <- cor(cor_data, method = "pearson")
+
+corrplot(
+  cor_matrix,
+  method      = "color",
+  type        = "upper",
+  addCoef.col = "black",
+  tl.col      = "black",
+  tl.srt      = 45,
+  col         = colorRampPalette(c("#E41A1C", "white", "#377EB8"))(200),
+  title       = "Pearson Correlation Matrix: Labor Market Indicators (2010-2024)",
+  mar         = c(0, 0, 2, 0)
+)
+```
+
+**Key findings:**
+
+- **Job openings and quit rate** are strongly positively correlated — when employers compete aggressively for workers, employees feel confident enough to quit voluntarily.
+- **Job openings and unemployment** are strongly negatively correlated — this is the Beveridge Curve relationship expressed as a single number.
+- **Fed funds rate and unemployment** are negatively correlated — rate hikes tend to follow tight labor markets.
+
+### 6.2 Multiple Linear Regression: Predicting Unemployment
+
+Can job openings, quit rate, and the federal funds rate together statistically predict the unemployment rate?
+
+```{r regression}
+model <- lm(unemployment_rate ~ job_openings_m + quit_rate + fed_funds_rate,
+            data = fred_wide)
+
+tidy(model) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4))) %>%
+  kable(caption = "Regression Coefficients: Predictors of Unemployment Rate") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+glance(model) %>%
+  select(r.squared, adj.r.squared, p.value, AIC) %>%
+  mutate(across(everything(), ~ round(.x, 4))) %>%
+  kable(caption = "Model Fit Statistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r regression-plot}
+fred_wide_model <- fred_wide %>%
+  drop_na(job_openings_m, quit_rate, fed_funds_rate) %>%
+  mutate(.fitted = fitted(model))
+
+ggplot(fred_wide_model, aes(x = date)) +
+  geom_line(aes(y = unemployment_rate, color = "Actual"),  linewidth = 0.9) +
+  geom_line(aes(y = .fitted,           color = "Fitted"),  linewidth = 0.9, linetype = "dashed") +
+  scale_color_manual(values = c("Actual" = "#E41A1C", "Fitted" = "#377EB8")) +
+  labs(
+    title    = "Actual vs. Fitted Unemployment Rate",
+    subtitle = paste0("Adj. R2 = ", round(summary(model)$adj.r.squared, 3),
+                      " — Model explains most variance outside the COVID shock"),
+    x = NULL, y = "Unemployment Rate (%)", color = NULL,
+    caption = "Source: FRED"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top")
+```
+
+**Interpretation:** The model achieves a high adjusted R², meaning these three indicators together explain the vast majority of month-to-month variation in unemployment. The largest residuals occur during the COVID shock in March–April 2020 — expected, since that spike was driven by an unprecedented external event rather than gradual labor market dynamics.
+
+---
+
+## 7. Beyond-Class Feature: Time-Series Forecasting with Prophet
+
+`prophet` is a forecasting library developed by Meta (Facebook) that was not covered in coursework. It automatically detects trend changepoints, handles yearly seasonality, and produces uncertainty intervals — well-suited to labor market time series with structural breaks like COVID.
+
+```{r prophet-forecast, cache=TRUE}
+# Prophet requires columns named 'ds' (date) and 'y' (value)
+prophet_df <- fred_wide %>%
+  select(ds = date, y = job_openings_m) %>%
+  drop_na()
+
+# Fit model with higher changepoint flexibility to capture the post-COVID structural break
+m <- prophet(
+  prophet_df,
+  yearly.seasonality      = TRUE,
+  weekly.seasonality      = FALSE,
+  daily.seasonality       = FALSE,
+  changepoint.prior.scale = 0.3
+)
+
+# Forecast 18 months ahead
+future      <- make_future_dataframe(m, periods = 18, freq = "month")
+forecast_df <- predict(m, future)
+
+# Plot
+plot(m, forecast_df) +
+  labs(
+    title    = "Prophet Forecast: U.S. Job Openings (millions)",
+    subtitle = "Historical data through 2024; shaded band = 80% uncertainty interval",
+    x = NULL, y = "Job Openings (millions)",
+    caption  = "Source: FRED | Forecast: Meta Prophet"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+```{r prophet-components}
+prophet_plot_components(m, forecast_df)
+```
+
+**Interpretation:** Prophet identifies a clear structural upward shift in job openings post-2020 and a subsequent normalization. The seasonal component reveals a mild annual cycle — openings tend to dip slightly in late winter and pick up in spring. The 18-month forecast projects continued stabilization around 7-8 million openings, consistent with a gradually softening but still historically tight labor market.
+
+---
+
+## 8. BLS Cross-Source Validation
+
+We use the BLS flat file to cross-validate FRED's total nonfarm job openings figures. Agreement between independent sources confirms data integrity.
+
+```{r bls-crosscheck}
+if (!is.null(bls_clean)) {
+  bls_jol <- bls_clean %>%
+    filter(str_detect(series_id, "JOL")) %>%
+    mutate(bls_openings_m = value / 1000) %>%
+    select(date, bls_openings_m)
+
+  comparison <- fred_wide %>%
+    select(date, job_openings_m) %>%
+    inner_join(bls_jol, by = "date") %>%
+    drop_na()
+
+  comparison %>%
+    summarise(
+      n            = n(),
+      mean_diff    = round(mean(job_openings_m - bls_openings_m, na.rm = TRUE), 5),
+      max_abs_diff = round(max(abs(job_openings_m - bls_openings_m), na.rm = TRUE), 5),
+      correlation  = round(cor(job_openings_m, bls_openings_m, use = "complete.obs"), 6)
+    ) %>%
+    kable(caption = "FRED vs. BLS Cross-Source Validation") %>%
+    kable_styling(bootstrap_options = c("striped"), full_width = FALSE)
+
+  comparison %>%
+    pivot_longer(-date, names_to = "source", values_to = "openings") %>%
+    mutate(source = recode(source,
+      "job_openings_m"  = "FRED CSV",
+      "bls_openings_m"  = "BLS Flat File"
+    )) %>%
+    ggplot(aes(x = date, y = openings, color = source, linetype = source)) +
+    geom_line(linewidth = 0.9) +
+    scale_color_manual(values = c("FRED CSV" = "#377EB8", "BLS Flat File" = "#E41A1C")) +
+    labs(
+      title    = "Cross-Source Validation: FRED vs. BLS Job Openings",
+      subtitle = "Series should track near-identically — any gap indicates a reporting lag",
+      x = NULL, y = "Job Openings (millions)",
+      color = "Source", linetype = "Source",
+      caption = "Sources: FRED; BLS JOLTS flat file"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(legend.position = "top")
+} else {
+  cat("BLS cross-validation skipped — flat file was unavailable at time of knitting.\n")
+}
+```
+
+---
+
+## 9. Conclusions
+
+This project analyzed U.S. labor market dynamics from 2010 through 2024 using two data source types (FRED public CSV and BLS flat file) and the OSEMN workflow.
+
+**Key findings:**
+
+1. **Job openings and quit rates peaked together in 2021-2022**, confirming the "Great Resignation" narrative with data. When employers compete aggressively for workers, employees feel confident enough to leave voluntarily — and the data shows both indicators moving in lockstep.
+
+2. **The Beveridge Curve shifted outward post-COVID**, indicating structural mismatch. More job openings now exist at any given unemployment level than before the pandemic, consistent with documented skills and geographic mismatches in the labor market.
+
+3. **A multiple linear regression using job openings, quit rate, and the fed funds rate explains the vast majority of variance in the unemployment rate**, demonstrating that these indicators function as an interconnected system rather than independently.
+
+4. **Prophet's 18-month forecast projects continued stabilization** around 7-8 million job openings — a meaningful cooling from the 2022 peak, but still historically elevated relative to the pre-pandemic decade.
+
+5. **Cross-source validation confirmed** near-perfect agreement between FRED and BLS job openings figures, validating the integrity of our primary data source.
+
+**Personal takeaway:** For job seekers, the data tells a nuanced story. The market has meaningfully cooled from its 2022 peak but has not collapsed. Openings remain above pre-pandemic norms, and unemployment — while rising modestly — remains low by historical standards. The window is narrowing, but it is still open.
+
+---
+
+## 10. References
+
+- Federal Reserve Bank of St. Louis. *FRED Economic Data.* https://fred.stlouisfed.org
+  - JTSJOL: Job Openings: Total Nonfarm (thousands)
+  - UNRATE: Civilian Unemployment Rate (%)
+  - JTSQUR: Quits Rate: Total Nonfarm (%)
+  - FEDFUNDS: Federal Funds Effective Rate (%)
+- Bureau of Labor Statistics. *JOLTS Public Data Series.* https://download.bls.gov/pub/time.series/jt/
+- Taylor, S.J. and Letham, B. (2018). Forecasting at scale. *The American Statistician*, 72(1), 37-45.
+- Beveridge, W.H. (1944). *Full Employment in a Free Society.* George Allen & Unwin.
